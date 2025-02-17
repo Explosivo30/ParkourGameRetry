@@ -8,11 +8,16 @@ public class PlayerIdleState : PlayerBaseState
 
     public override void Enter()
     {
+
         
     }
     public override void Tick()
     {
         Debug.Log("Estoy en idle");
+        stateMachine.GroundDetection();
+        stateMachine.ApplyGravity();
+        stateMachine.PlayerHorizontalMovement(stateMachine.CameraOritentedMovement(stateMachine.GetInput()));
+
     }
     public override void Exit()
     {
