@@ -240,8 +240,11 @@ public class PlayerStateMachine : StateMachine
     {
         if (Grounded)
         {
-            // Default grounded gravity (prevents "bouncing" on flat ground)
-            cc.Move((-GroundNormal * _gravityForce) * Time.deltaTime);
+            // Project gravity onto the ground normal to prevent horizontal movement
+            Vector3 groundedGravity = Vector3.ProjectOnPlane(_gravityDir * _gravityForce, GroundNormal.normalized);
+            cc.Move((GravityDir * _gravityForce) * Time.deltaTime);
+
+            
         }
         else
         {
