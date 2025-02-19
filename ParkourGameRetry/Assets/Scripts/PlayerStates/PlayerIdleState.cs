@@ -14,7 +14,9 @@ public class PlayerIdleState : PlayerBaseState
     public override void Tick()
     {
         Debug.Log("Estoy en idle");
+        
         stateMachine.GroundDetection();
+        
         stateMachine.ApplyGravity();
         stateMachine.PlayerHorizontalMovement(stateMachine.CameraOritentedMovement(stateMachine.GetInput()));
 

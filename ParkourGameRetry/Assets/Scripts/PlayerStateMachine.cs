@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Splines;
 
 public class PlayerStateMachine : StateMachine
 {
@@ -36,7 +37,7 @@ public class PlayerStateMachine : StateMachine
     //Variables 
     [SerializeField] float _acceleration = 12f;
     [SerializeField] float _targetVelocity = 10f;
-
+    [SerializeField] float slideSpeed = 5f; // Adjust as needed
     [SerializeField, Range(0f, 1f)] float _turnaroundStrength;
 
     //---- END PLAYER OWN MOVEMENT
@@ -65,8 +66,11 @@ public class PlayerStateMachine : StateMachine
 
     public void GroundDetection()
     {
-        if (Physics.SphereCast(transform.position + transform.up * _height, _castRadius, -transform.up, out RaycastHit hitInfo, _castLength, _groundMask))
+        if (Physics.SphereCast(transform.position + transform.up * _height, _castRadius, _downDir, out RaycastHit hitInfo, _castLength, _groundMask))
         {
+            Debug.Log(hitInfo.transform.up);
+            Debug.DrawRay(hitInfo.point, hitInfo.normal, Color.red, 50f);
+            
             if (Vector3.Dot(hitInfo.normal, -_downDir) > Mathf.Sin((90f - _maxAngle) * Mathf.PI / 180f))
             {
                 _groundNormal = hitInfo.normal;
@@ -117,8 +121,14 @@ public class PlayerStateMachine : StateMachine
         Debug.DrawRay(transform.position + transform.up * 0.8f, new Vector3(currentVel2d.x, 0f, currentVel2d.y), Color.green);
         Vector3 outputHorizontal = MultiplyByPlane(currentVel2d, GroundNormal);
         Debug.DrawRay(transform.position + transform.up * 0.8f, outputHorizontal, Color.blue);
-        Debug.Log($"Input: {input}");
-        cc.Move((outputHorizontal + (GroundNormal * vVel)) * Time.deltaTime);
+        //Debug.Log($"Input: {input}");
+        
+       
+        cc.Move((outputHorizontal + (GroundNormal * vVel)) * Time.deltaTime/**/ );
+
+        
+
+        
     }
 
 
@@ -197,7 +207,7 @@ public class PlayerStateMachine : StateMachine
         float targetVelSq = _targetVelocity * _targetVelocity;
         if (currentVelocity.sqrMagnitude < targetVelSq)
         {
-            currentVelocity += (input * _acceleration);
+            currentVelocity += (input * _acceleration );
             if (currentVelocity.sqrMagnitude > targetVelSq)
             {
                 float mag = Mathf.Clamp(currentVelocity.magnitude, 0f, _targetVelocity);
@@ -209,6 +219,7 @@ public class PlayerStateMachine : StateMachine
         if (Sliding)
         {
             //TODO sliding off logic
+            
         }
 
         return currentVelocity;
@@ -229,11 +240,22 @@ public class PlayerStateMachine : StateMachine
     {
         if (Grounded)
         {
+            // Default grounded gravity (prevents "bouncing" on flat ground)
             cc.Move((-GroundNormal * _gravityForce) * Time.deltaTime);
         }
         else
         {
-            cc.Move((_gravityDir * _gravityForce) * Time.deltaTime);
+            if (Sliding)
+            {
+                // Calculate sliding direction along the slope
+                Vector3 slideDirection = Vector3.ProjectOnPlane(Vector3.down, SlideNormal).normalized;
+                cc.Move(slideDirection * _gravityForce * Time.deltaTime);
+            }
+            else
+            {
+                // Regular airborne gravity
+                cc.Move((_gravityDir * _gravityForce) * Time.deltaTime);
+            }
         }
     }
 
