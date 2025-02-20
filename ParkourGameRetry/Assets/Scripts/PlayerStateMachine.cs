@@ -236,6 +236,9 @@ public class PlayerStateMachine : StateMachine
         return dot;
     }
 
+
+    private Vector3 _horizontalVelocity; // Stores horizontal velocity during sliding
+    [SerializeField] float scalarHVelocity = 50f;
     public void ApplyGravity()
     {
         if (Grounded)
@@ -252,12 +255,14 @@ public class PlayerStateMachine : StateMachine
             {
                 // Calculate sliding direction along the slope
                 Vector3 slideDirection = Vector3.ProjectOnPlane(Vector3.down, SlideNormal).normalized;
+                _horizontalVelocity += Vector3.ProjectOnPlane(cc.velocity, SlideNormal);
+                _horizontalVelocity.y = 0f;
                 cc.Move(slideDirection * _gravityForce * Time.deltaTime);
             }
             else
             {
                 // Regular airborne gravity
-                cc.Move((_gravityDir * _gravityForce) * Time.deltaTime);
+                cc.Move((_gravityDir * _gravityForce + (_horizontalVelocity.normalized*scalarHVelocity)) * Time.deltaTime);
             }
         }
     }
