@@ -218,8 +218,12 @@ public class PlayerStateMachine : StateMachine
         //slide off
         if (Sliding)
         {
-            //TODO sliding off logic
-            
+            Vector3 slideDirection = Vector3.ProjectOnPlane(Vector3.down, SlideNormal).normalized;
+            Vector3 slideVelocity = Vector3.ProjectOnPlane(new Vector3(currentVelocity.x, 0f, currentVelocity.y), SlideNormal);
+
+            // Combine sliding direction with input
+            currentVelocity = new Vector2(slideVelocity.x, slideVelocity.z);
+
         }
 
         return currentVelocity;
