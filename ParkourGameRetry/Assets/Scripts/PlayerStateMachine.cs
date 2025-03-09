@@ -1,8 +1,13 @@
+using Unity.Cinemachine;
 using UnityEngine;
 using UnityEngine.Splines;
 
 public class PlayerStateMachine : StateMachine
 {
+    //Control Start
+    InputReader controls;
+    //Control End
+
     //----- START GROUND DETECTION
     [SerializeField] float _height;
     [SerializeField] float _castRadius = 0.49f;
@@ -39,7 +44,8 @@ public class PlayerStateMachine : StateMachine
     [SerializeField] float _targetVelocity = 10f;
     [SerializeField] float slideSpeed = 5f; // Adjust as needed
     [SerializeField, Range(0f, 1f)] float _turnaroundStrength;
-
+    [SerializeField] float rotationSpeed = 50f;
+    public CinemachineInputAxisController cineMachineCamera;
     //---- END PLAYER OWN MOVEMENT
 
 
@@ -56,6 +62,8 @@ public class PlayerStateMachine : StateMachine
     private void OnValidate()
     {
         _downDir = _downDir.normalized;
+        controls = GetComponent<InputReader>();
+        
     }
 
     private void Start()
@@ -99,11 +107,12 @@ public class PlayerStateMachine : StateMachine
     public Vector2 GetInput()// TODO Replace with new input system
     {
         Vector2 moveInput;
-        float horizontalInput = Input.GetAxisRaw("Horizontal");
-        float verticalInput = Input.GetAxisRaw("Vertical");
+        //float horizontalInput = Input.GetAxisRaw("Horizontal");
+        //float verticalInput = Input.GetAxisRaw("Vertical");
 
         // Direccionar Vector
-        moveInput = new Vector2(horizontalInput, verticalInput);
+        //moveInput = new Vector2(horizontalInput, verticalInput);
+        moveInput = controls.MovementValue;
         moveInput.Normalize();
         return moveInput;
     }
@@ -277,4 +286,25 @@ public class PlayerStateMachine : StateMachine
         }
     }
 
+
+    public void PlayerLook()
+    {
+        Vector2 rotateVector = controls.LookValue;
+        rotateVector.Normalize();
+
+        float horizontalInput = rotateVector.x; // For character rotation (Y-axis)
+        float verticalInput = rotateVector.y;   // For camera rotation (X-axis)
+
+        // Rotate the character around the Y-axis (horizontal input)
+        if (horizontalInput != 0)
+        {
+            Vector3 characterDirection = new Vector3(horizontalInput, 0f, 0f).normalized;
+            Quaternion targetCharacterRotation = Quaternion.LookRotation(characterDirection);
+            transform.rotation = Quaternion.RotateTowards(transform.rotation, targetCharacterRotation, rotationSpeed * Time.deltaTime);
+        }
+
+        // Rotate the Cinemachine FreeLook camera (vertical input)
+        
+    }
 }
+
