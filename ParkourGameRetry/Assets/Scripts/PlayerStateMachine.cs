@@ -42,7 +42,7 @@ public class PlayerStateMachine : StateMachine
     //Variables 
     [SerializeField] float _acceleration = 12f;
     [SerializeField] float _targetVelocity = 10f;
-    [SerializeField] float slideSpeed = 5f; // Adjust as needed
+    
     [SerializeField, Range(0f, 1f)] float _turnaroundStrength;
     [SerializeField] float rotationSpeed = 50f;
     public CinemachineInputAxisController cineMachineCamera;
@@ -290,21 +290,18 @@ public class PlayerStateMachine : StateMachine
     public void PlayerLook()
     {
         Vector2 rotateVector = controls.LookValue;
-        rotateVector.Normalize();
 
         float horizontalInput = rotateVector.x; // For character rotation (Y-axis)
-        float verticalInput = rotateVector.y;   // For camera rotation (X-axis)
 
         // Rotate the character around the Y-axis (horizontal input)
         if (horizontalInput != 0)
         {
-            Vector3 characterDirection = new Vector3(horizontalInput, 0f, 0f).normalized;
-            Quaternion targetCharacterRotation = Quaternion.LookRotation(characterDirection);
-            transform.rotation = Quaternion.RotateTowards(transform.rotation, targetCharacterRotation, rotationSpeed * Time.deltaTime);
-        }
+            // Calculate the desired rotation angle
+            float rotationAngle = horizontalInput * rotationSpeed * Time.deltaTime;
 
-        // Rotate the Cinemachine FreeLook camera (vertical input)
-        
+            // Apply the rotation around the Y-axis
+            transform.Rotate(0f, rotationAngle, 0f);
+        }
     }
 }
 
