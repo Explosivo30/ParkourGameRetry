@@ -916,7 +916,7 @@ Transform:
   m_GameObject: {fileID: 1119171938}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 1, z: -10}
+  m_LocalPosition: {x: -3.17, y: 1, z: -10}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -1621,7 +1621,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2280b8a5db7f30948bcee17880a361aa, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  GridDimension: 61
+  GridDimension: 20
   Mode: 0
   TimeSlicePercentage: 10
   DrawRays: 0
@@ -2049,7 +2049,7 @@ Transform:
   m_GameObject: {fileID: 3051625753853547696}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -4.26, y: 0.73, z: -0.62}
+  m_LocalPosition: {x: -0.56, y: 0.73, z: -3.55}
   m_LocalScale: {x: 0.6, y: 0.6, z: 0.6}
   m_ConstrainProportionsScale: 0
   m_Children: []
