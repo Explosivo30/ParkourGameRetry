@@ -9640,7 +9640,7 @@
     "m_ObjectId": "9621c6f73a384765b1f5ea95d0c83adf",
     "m_Title": "Square Edge Mask",
     "m_Position": {
-        "x": -2492.999755859375,
+        "x": -2493.0,
         "y": 2111.0
     }
 }
@@ -11102,7 +11102,7 @@
     "m_ObjectId": "b31d7d03842d479e98193fdc6f2ca021",
     "m_Title": "Blur",
     "m_Position": {
-        "x": -544.0000610351563,
+        "x": -544.0,
         "y": 559.0
     }
 }
@@ -14305,7 +14305,7 @@
     "m_ObjectId": "f2da08a100fe46868b3b16db1ff9284c",
     "m_Title": "Vignette Center Mask",
     "m_Position": {
-        "x": -2336.999755859375,
+        "x": -2337.0,
         "y": 907.0
     }
 }
