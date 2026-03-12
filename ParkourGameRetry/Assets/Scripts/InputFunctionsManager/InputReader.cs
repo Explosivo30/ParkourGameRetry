@@ -1,5 +1,4 @@
 using System;
-using UnityEditor.ShaderGraph;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -11,6 +10,8 @@ public class InputReader : MonoBehaviour,InputSystem_Actions.IPlayerActions
     public Vector2 MovementValue { get; private set; }
     public Vector2 LookValue { get; private set; }
 
+    public event Action OnJumpStarted;   
+    public event Action OnJumpCanceled;
     public event Action JumpEvent;
     public event Action DodgeEvent;
     public event Action TargetEvent;
@@ -49,7 +50,8 @@ public class InputReader : MonoBehaviour,InputSystem_Actions.IPlayerActions
 
     public void OnJump(InputAction.CallbackContext context)
     {
-        
+        if (context.started) OnJumpStarted?.Invoke();
+        if (context.canceled) OnJumpCanceled?.Invoke();
     }
 
     public void OnLook(InputAction.CallbackContext context)

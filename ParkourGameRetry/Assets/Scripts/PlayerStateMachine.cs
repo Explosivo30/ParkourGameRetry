@@ -59,6 +59,42 @@ public class PlayerStateMachine : StateMachine
 
     //----- END PLAYER GRAVITY
 
+    //  --- VAULT
+    
+    [Header("Vault")]
+    [SerializeField] LayerMask _vaultMask;
+    [SerializeField] float _vaultCheckDistance = 1.2f;   // how far forward to check
+    [SerializeField] float _vaultMaxHeight = 1.5f;        // max obstacle height to vault
+    [SerializeField] float _vaultMinHeight = 0.3f;        // min obstacle height
+    [SerializeField] float _vaultDuration = 0.35f;
+    public float VaultDuration => _vaultDuration;
+    [SerializeField] float _vaultArcHeight = 0.4f;
+    public float VaultArcHeight => _vaultArcHeight;
+    [SerializeField] float _vaultExitSpeed = 4f;
+    public float VaultExitSpeed => _vaultExitSpeed;
+    [SerializeField] float _vaultExitUpForce = 1f;
+    public float VaultExitUpForce => _vaultExitUpForce;
+
+    public Vector3 VaultTargetPosition { get; private set; }
+    public bool JumpPressed { get; private set; }
+    public bool JumpHeld { get; private set; }
+    [Header("Jump")]
+    [SerializeField] float _jumpForce = 8f;
+    public float JumpForce => _jumpForce;
+
+    // Coyote Time: allows jumping for a brief window after walking off a ledge
+    [SerializeField] float _coyoteTime = 0.15f;
+    public float CoyoteTime => _coyoteTime;
+    public float CoyoteTimeCounter;   // counts down from CoyoteTime
+
+    // Jump Buffer: remembers jump input slightly before landing
+    [SerializeField] float _jumpBufferTime = 0.15f;
+    public float JumpBufferTime => _jumpBufferTime;
+    public float JumpBufferCounter;   // counts down from JumpBufferTime
+   
+
+    //  --- END VAULT
+
     private void OnValidate()
     {
         _downDir = _downDir.normalized;
@@ -68,7 +104,8 @@ public class PlayerStateMachine : StateMachine
 
     private void Start()
     {
-        SwitchState(new PlayerIdleState(this));
+        AddState(new PlayerIdleState(this));
+        SwitchState(typeof(PlayerIdleState));
     }
 
 
@@ -134,10 +171,6 @@ public class PlayerStateMachine : StateMachine
         
        
         cc.Move((outputHorizontal + (GroundNormal * vVel)) * Time.deltaTime/**/ );
-
-        
-
-        
     }
 
 
@@ -238,6 +271,42 @@ public class PlayerStateMachine : StateMachine
         return currentVelocity;
     }
 
+    public void SubscribeInputJump()
+    {
+        controls.OnJumpStarted += HandleJumpStarted;
+        controls.OnJumpCanceled += HandleJumpCanceled;
+    }
+
+    public void UnsubscribeInputJump()
+    {
+        controls.OnJumpStarted -= HandleJumpStarted;
+        controls.OnJumpCanceled -= HandleJumpCanceled;
+    }
+
+    private void HandleJumpStarted()
+    {
+        JumpPressed = true;
+        JumpHeld = true;
+    }
+
+    private void HandleJumpCanceled()
+    {
+        JumpHeld = false;
+    }
+
+    // =====================================================================
+    //  UPDATE — Coyote Time counter
+    // =====================================================================
+    // Note: called by StateMachine base if it calls base.Update() or you
+    // can hook it directly. Subtract CoyoteTime each frame outside ground.
+    public void TickCoyoteTime(float dt)
+    {
+        if (Grounded)
+            CoyoteTimeCounter = _coyoteTime;
+        else if (CoyoteTimeCounter > 0f)
+            CoyoteTimeCounter -= dt;
+    }
+
     //can be deleted only used for the example
     public float VelocityRemaining(Vector3 currentVelocity, Vector3 input)
     {
@@ -303,5 +372,37 @@ public class PlayerStateMachine : StateMachine
             transform.Rotate(0f, rotationAngle, 0f);
         }
     }
+
+    //  VAULT DETECTION
+    // =====================================================================
+    /// <summary>
+    /// Returns true if there's a vaultable obstacle in front of the player.
+    /// Sets VaultTargetPosition to the landing spot.
+    /// </summary>
+    public bool CanVault()
+    {
+        Vector3 forward = new Vector3(transform.forward.x, 0f, transform.forward.z).normalized;
+        Vector3 origin = transform.position + Vector3.up * _vaultMaxHeight;
+
+        // Cast forward + downward to find obstacle top surface
+        // Step 1: check there's something solid in front at chest level
+        if (!Physics.Raycast(transform.position + Vector3.up * (_vaultMinHeight + 0.1f),
+            forward, out RaycastHit frontHit, _vaultCheckDistance, _vaultMask))
+            return false;
+
+        // Step 2: raycast downward from above the obstacle to find its top
+        Vector3 overObstacle = frontHit.point + forward * 0.1f + Vector3.up * _vaultMaxHeight;
+        if (!Physics.Raycast(overObstacle, Vector3.down, out RaycastHit topHit, _vaultMaxHeight * 2f, _vaultMask))
+            return false;
+
+        float obstacleHeight = topHit.point.y - transform.position.y;
+        if (obstacleHeight < _vaultMinHeight || obstacleHeight > _vaultMaxHeight)
+            return false;
+
+        // Landing position: just past the obstacle
+        VaultTargetPosition = topHit.point + forward * (_vaultCheckDistance * 0.5f);
+        return true;
+    }
+
 }
 
