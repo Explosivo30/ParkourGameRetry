@@ -40,7 +40,9 @@ public class PlayerStateMachine : StateMachine
     //---- START PLAYER OWN MOVEMENT
 
     //Variables 
+    [ExcelPort]
     [SerializeField] float _acceleration = 12f;
+    [ExcelPort]
     [SerializeField] float _targetVelocity = 10f;
     
     [SerializeField, Range(0f, 1f)] float _turnaroundStrength;
@@ -51,7 +53,7 @@ public class PlayerStateMachine : StateMachine
 
     //----- START PLAYER GRAVITY
 
-
+    [ExcelPort]
     [SerializeField] float _gravityForce = 9.81f;
     public Vector3 GravityDir { get { return _gravityDir; } set { _gravityDir = value.normalized; } }
     Vector3 _gravityDir = Vector3.down;
@@ -79,15 +81,18 @@ public class PlayerStateMachine : StateMachine
     public bool JumpPressed { get; private set; }
     public bool JumpHeld { get; private set; }
     [Header("Jump")]
+    [ExcelPort]
     [SerializeField] float _jumpForce = 8f;
     public float JumpForce => _jumpForce;
 
     // Coyote Time: allows jumping for a brief window after walking off a ledge
+    [ExcelPort]
     [SerializeField] float _coyoteTime = 0.15f;
     public float CoyoteTime => _coyoteTime;
     public float CoyoteTimeCounter;   // counts down from CoyoteTime
 
     // Jump Buffer: remembers jump input slightly before landing
+    [ExcelPort(" remembers jump input slightly before landing")]
     [SerializeField] float _jumpBufferTime = 0.15f;
     public float JumpBufferTime => _jumpBufferTime;
     public float JumpBufferCounter;   // counts down from JumpBufferTime

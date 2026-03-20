@@ -1,0 +1,7 @@
+﻿field,type,description,Player
+_acceleration,Single,
+_targetVelocity,Single,
+_gravityForce,Single,,9.81
+_jumpForce,Single,
+_coyoteTime,Single,,0.15
+_jumpBufferTime,Single, remembers jump input slightly before landing,0.15
