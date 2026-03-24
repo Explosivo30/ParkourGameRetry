@@ -29,6 +29,10 @@ public class PlayerIdleState : PlayerBaseState
         bool wantsToJump = stateMachine.JumpPressed || stateMachine.JumpBufferCounter > 0f;
         bool canJump = stateMachine.Grounded || stateMachine.CoyoteTimeCounter > 0f;
 
+        if (wantsToJump && canJump)
+        {
+            stateMachine.ExecuteJump();
+        }
     }
 
 

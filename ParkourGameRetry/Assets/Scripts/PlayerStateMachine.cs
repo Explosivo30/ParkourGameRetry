@@ -110,12 +110,21 @@ public class PlayerStateMachine : StateMachine
     private void Start()
     {
         AddState(new PlayerIdleState(this));
+        
         SwitchState(typeof(PlayerIdleState));
     }
 
 
     public void GroundDetection()
     {
+        // Prevent snapping back to the ground if the player is moving up (e.g. jumping)
+        if (Vector3.Dot(currentForceGravity, -_downDir) > 0.1f)
+        {
+            _grounded = false;
+            _sliding = false;
+            return;
+        }
+
         if (Physics.SphereCast(transform.position + transform.up * _height, _castRadius, _downDir, out RaycastHit hitInfo, _castLength, _groundMask))
         {
             Debug.Log(hitInfo.transform.up);
@@ -297,10 +306,21 @@ public class PlayerStateMachine : StateMachine
     private void HandleJumpCanceled()
     {
         JumpHeld = false;
+        JumpPressed = false;
+    }
+
+    public void ExecuteJump()
+    {
+        currentForceGravity = -_gravityDir * _jumpForce;
+        cc.Move(currentForceGravity * Time.deltaTime);
+        JumpBufferCounter = 0f;
+        CoyoteTimeCounter = 0f;
+        JumpPressed = false; // Consume the initial jump press to prevent infinite jumps
+        _grounded = false; // Force unground to ensure apply gravity doesn't reset velocity immediately
     }
 
     // =====================================================================
-    //  UPDATE — Coyote Time counter
+    //  UPDATE â€” Coyote Time counter
     // =====================================================================
     // Note: called by StateMachine base if it calls base.Update() or you
     // can hook it directly. Subtract CoyoteTime each frame outside ground.
