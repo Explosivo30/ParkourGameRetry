@@ -27,6 +27,13 @@ public class PlayerIdleState : PlayerBaseState
         // --- Jump input ---
         // Either fresh press OR buffered jump that was saved in air
         bool wantsToJump = stateMachine.JumpPressed || stateMachine.JumpBufferCounter > 0f;
+
+        if (stateMachine.JumpPressed && stateMachine.CanVault())
+        {
+            stateMachine.SwitchState(typeof(PlayerVaultState));
+            return;
+        }
+
         bool canJump = stateMachine.Grounded || stateMachine.CoyoteTimeCounter > 0f;
 
         if (wantsToJump && canJump)

@@ -110,6 +110,7 @@ public class PlayerStateMachine : StateMachine
     private void Start()
     {
         AddState(new PlayerIdleState(this));
+        AddState(new PlayerVaultState(this));
         
         SwitchState(typeof(PlayerIdleState));
     }
