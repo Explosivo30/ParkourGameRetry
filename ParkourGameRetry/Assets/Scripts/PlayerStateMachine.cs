@@ -159,11 +159,6 @@ public class PlayerStateMachine : StateMachine
     public Vector2 GetInput()// TODO Replace with new input system
     {
         Vector2 moveInput;
-        //float horizontalInput = Input.GetAxisRaw("Horizontal");
-        //float verticalInput = Input.GetAxisRaw("Vertical");
-
-        // Direccionar Vector
-        //moveInput = new Vector2(horizontalInput, verticalInput);
         moveInput = controls.MovementValue;
         moveInput.Normalize();
         return moveInput;
@@ -171,21 +166,25 @@ public class PlayerStateMachine : StateMachine
 
     public void PlayerHorizontalMovement(Vector2 input)
     {
-        float vVel = Vector3.Dot(cc.velocity, GroundNormal);
+        Vector3 currentVelocity = cc.velocity;
 
-        Vector2 currentVel2d = Get2dOrientation(Vector3.ProjectOnPlane(cc.velocity, GroundNormal), GroundNormal);
+        // Override velocity if requested (e.g., after a vault to stop momentum burst)
+        if (_forceZeroVelocityNextFrame)
+        {
+            currentVelocity = Vector3.zero;
+            _forceZeroVelocityNextFrame = false;
+        }
 
+        float vVel = Vector3.Dot(currentVelocity, GroundNormal);
+        Vector2 currentVel2d = Get2dOrientation(Vector3.ProjectOnPlane(currentVelocity, GroundNormal), GroundNormal);
 
         currentVel2d = Movement(currentVel2d, input);
-
 
         Debug.DrawRay(transform.position + transform.up * 0.8f, new Vector3(currentVel2d.x, 0f, currentVel2d.y), Color.green);
         Vector3 outputHorizontal = MultiplyByPlane(currentVel2d, GroundNormal);
         Debug.DrawRay(transform.position + transform.up * 0.8f, outputHorizontal, Color.blue);
-        //Debug.Log($"Input: {input}");
         
-       
-        cc.Move((outputHorizontal + (GroundNormal * vVel)) * Time.deltaTime/**/ );
+        cc.Move((outputHorizontal + (GroundNormal * vVel)) * Time.deltaTime);
     }
 
 
@@ -202,7 +201,6 @@ public class PlayerStateMachine : StateMachine
         Vector3 camRightAxis = Vector3.ProjectOnPlane(Vector3.right, GroundNormal).normalized;
 
         Vector2 output;
-
         output.x = (Vector3.Dot(camRight + camForward, camRightAxis));
         output.y = (Vector3.Dot(camForward + camRight, camForwardAxis));
 
@@ -210,6 +208,7 @@ public class PlayerStateMachine : StateMachine
 
         return output;
     }
+
     /// <summary>
     /// change a vector from a 3d vector to a 2d vector 
     /// </summary>
@@ -255,8 +254,6 @@ public class PlayerStateMachine : StateMachine
     /// <returns>new Velocity for the player</returns>
     public Vector2 Movement(Vector2 currentVelocity, Vector2 input)
     {
-        //Example
-
         //reduction of velocity by change of direction
         currentVelocity *= VelocityRemaining(currentVelocity.normalized, input);
 
@@ -264,7 +261,7 @@ public class PlayerStateMachine : StateMachine
         float targetVelSq = _targetVelocity * _targetVelocity;
         if (currentVelocity.sqrMagnitude < targetVelSq)
         {
-            currentVelocity += (input * _acceleration );
+            currentVelocity += (input * _acceleration);
             if (currentVelocity.sqrMagnitude > targetVelSq)
             {
                 float mag = Mathf.Clamp(currentVelocity.magnitude, 0f, _targetVelocity);
@@ -277,10 +274,7 @@ public class PlayerStateMachine : StateMachine
         {
             Vector3 slideDirection = Vector3.ProjectOnPlane(Vector3.down, SlideNormal).normalized;
             Vector3 slideVelocity = Vector3.ProjectOnPlane(new Vector3(currentVelocity.x, 0f, currentVelocity.y), SlideNormal);
-
-            // Combine sliding direction with input
             currentVelocity = new Vector2(slideVelocity.x, slideVelocity.z);
-
         }
 
         return currentVelocity;
@@ -302,12 +296,24 @@ public class PlayerStateMachine : StateMachine
     {
         JumpPressed = true;
         JumpHeld = true;
+        JumpBufferCounter = _jumpBufferTime; // Inicializar buffer de salto
     }
 
     private void HandleJumpCanceled()
     {
         JumpHeld = false;
         JumpPressed = false;
+    }
+
+    public void ClearJumpInputFrame()
+    {
+        JumpPressed = false;
+    }
+
+    public void DecrementJumpBuffer(float dt)
+    {
+        if (JumpBufferCounter > 0f)
+            JumpBufferCounter -= dt;
     }
 
     public void ExecuteJump()
@@ -317,14 +323,31 @@ public class PlayerStateMachine : StateMachine
         JumpBufferCounter = 0f;
         CoyoteTimeCounter = 0f;
         JumpPressed = false; // Consume the initial jump press to prevent infinite jumps
-        _grounded = false; // Force unground to ensure apply gravity doesn't reset velocity immediately
+        _grounded = false;   // Force unground to ensure apply gravity doesn't reset velocity immediately
+    }
+
+    private bool _forceZeroVelocityNextFrame;
+
+    /// <summary>
+    /// Limpia inputs de salto y resetea la fisica interna al salir del vault.
+    /// Evita el salto automatico y el disparo de velocidad post-vault.
+    /// </summary>
+    public void ResetVaultPhysics()
+    {
+        JumpPressed = false;
+        JumpHeld = false;
+        JumpBufferCounter = 0f;
+
+        currentForceGravity = Vector3.zero;
+        _horizontalVelocity = Vector3.zero;
+
+        // Ignora el spike de velocidad del CharacterController generado durante el vault
+        _forceZeroVelocityNextFrame = true;
     }
 
     // =====================================================================
     //  UPDATE — Coyote Time counter
     // =====================================================================
-    // Note: called by StateMachine base if it calls base.Update() or you
-    // can hook it directly. Subtract CoyoteTime each frame outside ground.
     public void TickCoyoteTime(float dt)
     {
         if (Grounded)
@@ -333,7 +356,6 @@ public class PlayerStateMachine : StateMachine
             CoyoteTimeCounter -= dt;
     }
 
-    //can be deleted only used for the example
     public float VelocityRemaining(Vector3 currentVelocity, Vector3 input)
     {
         float dot = Vector2.Dot(currentVelocity.normalized, input.normalized);
@@ -348,23 +370,24 @@ public class PlayerStateMachine : StateMachine
     private Vector3 _horizontalVelocity; // Stores horizontal velocity during sliding
     [SerializeField] float scalarHVelocity = 50f;
     private Vector3 currentForceGravity = Vector3.zero;
+
     public void ApplyGravity()
     {
         if (Grounded)
         {
+            // Limpiar velocidad horizontal acumulada al aterrizar.
+            // Si no se borra aqui, se aplica en cada salto futuro como una direccion fantasma.
+            _horizontalVelocity = Vector3.zero;
+
             currentForceGravity = (_gravityDir * _gravityForce) * Time.deltaTime;
-            // Project gravity onto the ground normal to prevent horizontal movement
             Vector3 groundedGravity = Vector3.ProjectOnPlane(_gravityDir * _gravityForce, GroundNormal.normalized);
             cc.Move((GravityDir * _gravityForce) * Time.deltaTime);
-
-            
         }
         else
         {
             if (Sliding)
             {
                 currentForceGravity = Vector3.zero;
-                // Calculate sliding direction along the slope
                 Vector3 slideDirection = Vector3.ProjectOnPlane(Vector3.down, SlideNormal).normalized;
                 _horizontalVelocity += Vector3.ProjectOnPlane(cc.velocity, SlideNormal);
                 _horizontalVelocity.y = 0f;
@@ -372,11 +395,8 @@ public class PlayerStateMachine : StateMachine
             }
             else
             {
-                currentForceGravity +=  (_gravityDir * _gravityForce) * Time.deltaTime;
-                // Regular airborne gravity
-                cc.Move(( currentForceGravity+ (_horizontalVelocity.normalized*scalarHVelocity)) * Time.deltaTime);
-
-                //cc.Move(((GravityDir * _gravityForce)+ (resetVelo + _horizontalVelocity.normalized)) * Time.deltaTime);
+                currentForceGravity += (_gravityDir * _gravityForce) * Time.deltaTime;
+                cc.Move((currentForceGravity + (_horizontalVelocity.normalized * scalarHVelocity)) * Time.deltaTime);
             }
         }
     }
@@ -385,16 +405,11 @@ public class PlayerStateMachine : StateMachine
     public void PlayerLook()
     {
         Vector2 rotateVector = controls.LookValue;
+        float horizontalInput = rotateVector.x;
 
-        float horizontalInput = rotateVector.x; // For character rotation (Y-axis)
-
-        // Rotate the character around the Y-axis (horizontal input)
         if (horizontalInput != 0)
         {
-            // Calculate the desired rotation angle
             float rotationAngle = horizontalInput * rotationSpeed * Time.deltaTime;
-
-            // Apply the rotation around the Y-axis
             transform.Rotate(0f, rotationAngle, 0f);
         }
     }
@@ -403,32 +418,49 @@ public class PlayerStateMachine : StateMachine
     // =====================================================================
     /// <summary>
     /// Returns true if there's a vaultable obstacle in front of the player.
+    /// Works both grounded (vault over) and airborne (ledge mantle/grab).
     /// Sets VaultTargetPosition to the landing spot.
     /// </summary>
     public bool CanVault()
     {
         Vector3 forward = new Vector3(transform.forward.x, 0f, transform.forward.z).normalized;
-        Vector3 origin = transform.position + Vector3.up * _vaultMaxHeight;
 
-        // Cast forward + downward to find obstacle top surface
-        // Step 1: check there's something solid in front at chest level
+        // Si el jugador se mueve significativamente ALEJANDOSE del obstaculo, no hacer vault.
+        // Esto evita el vault hacia atras cuando caes de una plataforma mirando hacia ella.
+        Vector3 horizontalVel = new Vector3(cc.velocity.x, 0f, cc.velocity.z);
+        if (horizontalVel.magnitude > 1.0f && Vector3.Dot(horizontalVel.normalized, forward) < -0.3f)
+            return false;
+
+        // Busca una pared enfrente a la altura actual del jugador
+        // Funciona tanto en suelo como en el aire (ledge mantle)
         if (!Physics.Raycast(transform.position + Vector3.up * (_vaultMinHeight + 0.1f),
             forward, out RaycastHit frontHit, _vaultCheckDistance, _vaultMask))
             return false;
 
-        // Step 2: raycast downward from above the obstacle to find its top
-        Vector3 overObstacle = frontHit.point + forward * 0.1f + Vector3.up * _vaultMaxHeight;
+        // Lanza un rayo hacia abajo desde arriba del punto de impacto
+        // usando la Y del jugador como base, no la del suelo
+        float castY = transform.position.y + _vaultMaxHeight;
+        Vector3 overObstacle = new Vector3(frontHit.point.x, castY, frontHit.point.z) + forward * 0.1f;
+
         if (!Physics.Raycast(overObstacle, Vector3.down, out RaycastHit topHit, _vaultMaxHeight * 2f, _vaultMask))
             return false;
 
-        float obstacleHeight = topHit.point.y - transform.position.y;
-        if (obstacleHeight < _vaultMinHeight || obstacleHeight > _vaultMaxHeight)
+        float ledgeTopY = topHit.point.y;
+        float playerY   = transform.position.y;
+
+        // El techo del ledge debe estar ENCIMA del jugador (al menos _vaultMinHeight)
+        // y no demasiado arriba (_vaultMaxHeight).
+        //
+        // El bound inferior es playerY + _vaultMinHeight, NO playerY - 0.3f.
+        // Antes, esa tolerancia negativa permitia detectar la plataforma en la que
+        // el jugador ya esta parado como un ledge valido → vault hacia atras.
+        // Ahora, el ledge debe estar genuinamente por encima del jugador.
+        if (ledgeTopY < playerY + _vaultMinHeight || ledgeTopY > playerY + _vaultMaxHeight)
             return false;
 
-        // Landing position: just past the obstacle
+        // Posicion de aterrizaje: encima y al otro lado del ledge
         VaultTargetPosition = topHit.point + forward * (_vaultCheckDistance * 0.5f);
         return true;
     }
 
 }
-

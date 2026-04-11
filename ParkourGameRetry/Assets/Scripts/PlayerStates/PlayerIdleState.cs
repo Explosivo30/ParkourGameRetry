@@ -25,11 +25,12 @@ public class PlayerIdleState : PlayerBaseState
         stateMachine.PlayerHorizontalMovement(stateMachine.CameraOritentedMovement(stateMachine.GetInput()));
 
         // --- Jump input ---
-        // Either fresh press OR buffered jump that was saved in air
+        stateMachine.DecrementJumpBuffer(deltaTime);
         bool wantsToJump = stateMachine.JumpPressed || stateMachine.JumpBufferCounter > 0f;
 
-        if (stateMachine.JumpPressed && stateMachine.CanVault())
+        if (wantsToJump && stateMachine.CanVault())
         {
+            stateMachine.JumpBufferCounter = 0f;
             stateMachine.SwitchState(typeof(PlayerVaultState));
             return;
         }
@@ -40,6 +41,9 @@ public class PlayerIdleState : PlayerBaseState
         {
             stateMachine.ExecuteJump();
         }
+
+        // Limpiar el input de salto para que no se quede guardado para saltos futuros infinitos
+        stateMachine.ClearJumpInputFrame();
     }
 
 

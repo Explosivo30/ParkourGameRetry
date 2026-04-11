@@ -1369,7 +1369,7 @@ GameObject:
   - component: {fileID: 40728598}
   - component: {fileID: 40728597}
   - component: {fileID: 40728596}
-  m_Layer: 0
+  m_Layer: 3
   m_Name: Cube
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -16876,32 +16876,16 @@ PrefabInstance:
       value: 7.41
       objectReference: {fileID: 0}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
-      propertyPath: _vaultDuration
-      value: 0.56
-      objectReference: {fileID: 0}
-    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _targetVelocity
       value: 20
       objectReference: {fileID: 0}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _vaultArcHeight
-      value: 1.19
-      objectReference: {fileID: 0}
-    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
-      propertyPath: _vaultMaxHeight
-      value: 2.17
-      objectReference: {fileID: 0}
-    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
-      propertyPath: _vaultMinHeight
-      value: 0.45
+      value: 2.18
       objectReference: {fileID: 0}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _vaultMask.m_Bits
       value: 4294967295
-      objectReference: {fileID: 0}
-    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
-      propertyPath: _vaultCheckDistance
-      value: 1.2
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

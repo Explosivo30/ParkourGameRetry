@@ -17,6 +17,7 @@ public class PlayerVaultState : PlayerBaseState
         targetPos = stateMachine.VaultTargetPosition;
         vaultTimer = 0f;
         cc = stateMachine.GetComponent<CharacterController>();
+        stateMachine.ClearJumpInputFrame();
     }
 
     public override void Tick(float deltaTime)
@@ -55,5 +56,6 @@ public class PlayerVaultState : PlayerBaseState
 
     public override void Exit()
     {
+        stateMachine.ResetVaultPhysics();
     }
 }
