@@ -41,14 +41,63 @@ public class PlayerStateMachine : StateMachine
 
     //Variables 
     [ExcelPort]
-    [SerializeField] float _acceleration = 12f;
+    [SerializeField] float _acceleration = 12f;        // Fuerza de aceleración al mantener input
     [ExcelPort]
-    [SerializeField] float _targetVelocity = 10f;
+    [SerializeField] float _targetVelocity = 10f;      // Velocidad máxima horizontal
+
+    [Header("Desaceleración")]
+    [SerializeField] float _deceleration = 8f;          // Fuerza de frenado cuando se suelta el input
     
+    [Header("Air Control")]
+    [SerializeField] float _airAcceleration = 5f;       // Aceleración/maniobrabilidad en el aire
+    [SerializeField] float _airDeceleration = 0f;       // Freno en el aire (0 = conserva toda la inercia)
+
     [SerializeField, Range(0f, 1f)] float _turnaroundStrength;
     [SerializeField] float rotationSpeed = 50f;
     public CinemachineInputAxisController cineMachineCamera;
+
+    // Estado interno de velocidad horizontal para conservar inercia real sin depender de cc.velocity
+    public Vector3 CurrentHorizontalVelocity { get { return _currentHorizontalVelocity; } set { _currentHorizontalVelocity = value; } }
+    private Vector3 _currentHorizontalVelocity;
     //---- END PLAYER OWN MOVEMENT
+
+
+    // =====================================================================
+    //  WALL-RUN — Parámetros configurables desde el Inspector
+    // =====================================================================
+    [Header("Wall-Run")]
+    [SerializeField] float _wallRunSpeed = 8f;              // Velocidad horizontal durante wall-run
+    [SerializeField] float _wallRunMaxDuration = 1.5f;      // Tiempo máximo que puede durar el wall-run
+    [SerializeField] float _wallRunGravityScale = 0.3f;     // Multiplicador de gravedad durante wall-run (0 = flotar, 1 = normal)
+    [SerializeField] float _wallCheckDistance = 0.8f;       // Distancia del raycast lateral para detectar paredes
+    [SerializeField] float _wallRunMinSpeed = 3f;           // Velocidad mínima para poder iniciar wall-run
+    [SerializeField] float _wallRunExitForce = 6f;          // Fuerza de impulso lateral al salir del wall-run
+    [SerializeField] float _wallRunExitUpForce = 5f;        // Fuerza de impulso vertical al salir del wall-run
+    [SerializeField] LayerMask _wallRunMask;                // Capas que se consideran paredes válidas para wall-run
+
+    // Propiedades públicas para que PlayerWallRunState acceda a los parámetros
+    public float WallRunSpeed => _wallRunSpeed;
+    public float WallRunMaxDuration => _wallRunMaxDuration;
+    public float WallRunGravityScale => _wallRunGravityScale;
+    public float WallRunExitForce => _wallRunExitForce;
+    public float WallRunExitUpForce => _wallRunExitUpForce;
+    public float GravityForce => _gravityForce;
+    public CharacterController CC => cc;
+
+    // =====================================================================
+    //  CAMERA TILT — Rotación Z de la cámara durante wall-run
+    // =====================================================================
+    [Header("Camera Tilt")]
+    [SerializeField] Transform _cameraTiltTarget;           // Transform de la cámara (o pivote hijo) donde se aplica el tilt Z
+    [SerializeField] float _wallRunCameraTiltAngle = 15f;   // Ángulo máximo de inclinación en Z
+    [SerializeField] float _wallRunCameraTiltSpeed = 5f;    // Velocidad del lerp para suavizar la transición
+
+    public float WallRunCameraTiltAngle => _wallRunCameraTiltAngle;
+    public float WallRunCameraTiltSpeed => _wallRunCameraTiltSpeed;
+
+    // Estado interno del tilt: se interpola de _currentCameraTilt hacia _targetCameraTilt
+    private float _currentCameraTilt = 0f;
+    private float _targetCameraTilt = 0f;
 
 
     //----- START PLAYER GRAVITY
@@ -109,10 +158,20 @@ public class PlayerStateMachine : StateMachine
 
     private void Start()
     {
+        // Registrar todos los estados disponibles en la máquina de estados
         AddState(new PlayerIdleState(this));
         AddState(new PlayerVaultState(this));
+        AddState(new PlayerWallRunState(this));  // Nuevo estado de wall-run
         
         SwitchState(typeof(PlayerIdleState));
+    }
+
+    // =====================================================================
+    //  LATE UPDATE — Aplica el tilt de cámara cada frame después del render
+    // =====================================================================
+    private void LateUpdate()
+    {
+        UpdateCameraTilt();
     }
 
 
@@ -164,121 +223,96 @@ public class PlayerStateMachine : StateMachine
         return moveInput;
     }
 
-    public void PlayerHorizontalMovement(Vector2 input)
+    public void PlayerHorizontalMovement(Vector3 inputDir)
     {
-        Vector3 currentVelocity = cc.velocity;
+        Vector3 currentVelocity = _currentHorizontalVelocity;
 
-        // Override velocity if requested (e.g., after a vault to stop momentum burst)
+        // Override velocity si es requerido (ej: salir de un vault para parar el impulso brusco)
         if (_forceZeroVelocityNextFrame)
         {
             currentVelocity = Vector3.zero;
             _forceZeroVelocityNextFrame = false;
         }
 
-        float vVel = Vector3.Dot(currentVelocity, GroundNormal);
-        Vector2 currentVel2d = Get2dOrientation(Vector3.ProjectOnPlane(currentVelocity, GroundNormal), GroundNormal);
+        // Alinear los vectores al plano del suelo (para no volar ni hundirnos al correr)
+        inputDir = Vector3.ProjectOnPlane(inputDir, GroundNormal).normalized;
+        currentVelocity = Vector3.ProjectOnPlane(currentVelocity, GroundNormal);
 
-        currentVel2d = Movement(currentVel2d, input);
+        float accel = Grounded ? _acceleration : _airAcceleration;
+        float decel = Grounded ? _deceleration : _airDeceleration;
 
-        Debug.DrawRay(transform.position + transform.up * 0.8f, new Vector3(currentVel2d.x, 0f, currentVel2d.y), Color.green);
-        Vector3 outputHorizontal = MultiplyByPlane(currentVel2d, GroundNormal);
-        Debug.DrawRay(transform.position + transform.up * 0.8f, outputHorizontal, Color.blue);
-        
-        cc.Move((outputHorizontal + (GroundNormal * vVel)) * Time.deltaTime);
+        // 1. APLICAR FRICCIÓN SIEMPRE (Como en la vida real)
+        float speed = currentVelocity.magnitude;
+        if (speed > 0)
+        {
+            float drop = decel * Time.deltaTime;
+            
+            // Freno extra si estamos girando drásticamente en el suelo (turnaround)
+            if (inputDir.sqrMagnitude > 0.01f && Grounded)
+            {
+                float dot = Vector3.Dot(currentVelocity.normalized, inputDir);
+                if (dot < 0) 
+                {
+                    drop += (decel * -dot * _turnaroundStrength * Time.deltaTime);
+                }
+            }
+
+            float newSpeed = Mathf.Max(speed - drop, 0);
+            currentVelocity *= (newSpeed / speed);
+        }
+
+        // 2. APLICAR ACELERACIÓN (Fuerza Aditiva)
+        if (inputDir.sqrMagnitude > 0.01f)
+        {
+            // Calculamos cuánta de nuestra velocidad actual ya va en la dirección del input
+            float currentSpeedInInputDirection = Vector3.Dot(currentVelocity, inputDir);
+            
+            // Calculamos cuánta velocidad nos falta para llegar a la velocidad máxima en esa dirección
+            float addSpeed = _targetVelocity - currentSpeedInInputDirection;
+
+            if (addSpeed > 0)
+            {
+                // Aceleramos, pero sin pasarnos de 'addSpeed'
+                float accelSpeed = accel * Time.deltaTime;
+                if (accelSpeed > addSpeed) accelSpeed = addSpeed;
+                
+                currentVelocity += inputDir * accelSpeed;
+            }
+            // Si addSpeed <= 0, significa que ya vamos más rápido que _targetVelocity en esa dirección
+            // (por ejemplo, saliendo de un wall-run). No frenamos forzosamente, la fricción se encargará gradualmente.
+        }
+
+        // 3. DESLIZAMIENTO EN PENDIENTES
+        if (Sliding && Grounded)
+        {
+            Vector3 slideVelocity = Vector3.ProjectOnPlane(currentVelocity, SlideNormal);
+            currentVelocity = slideVelocity;
+        }
+
+        // Guardar inercia real para el siguiente frame
+        _currentHorizontalVelocity = currentVelocity;
+
+        // Mover el CharacterController (horizontalmente, la gravedad va por separado)
+        cc.Move(currentVelocity * Time.deltaTime);
     }
 
-
-    public Vector2 CameraOritentedMovement(Vector2 input)
+    /// <summary>
+    /// Convierte el input 2D en una dirección 3D basada en la rotación de la cámara.
+    /// </summary>
+    public Vector3 GetWorldMovementDirection(Vector2 input)
     {
         Transform cameraTransform = Camera.main.transform;
-        Vector3 camRight = cameraTransform.right;
-        Vector3 camForward = cameraTransform.forward;
+        
+        // Obtener forward y right de la cámara, ignorando la inclinación arriba/abajo
+        Vector3 camRight = Vector3.ProjectOnPlane(cameraTransform.right, Vector3.up).normalized;
+        Vector3 camForward = Vector3.ProjectOnPlane(cameraTransform.forward, Vector3.up).normalized;
 
-        camForward = input.y * Vector3.ProjectOnPlane(camForward, Vector3.up).normalized;
-        camRight = input.x * Vector3.ProjectOnPlane(camRight, Vector3.up).normalized;
-
-        Vector3 camForwardAxis = Vector3.ProjectOnPlane(Vector3.forward, GroundNormal).normalized;
-        Vector3 camRightAxis = Vector3.ProjectOnPlane(Vector3.right, GroundNormal).normalized;
-
-        Vector2 output;
-        output.x = (Vector3.Dot(camRight + camForward, camRightAxis));
-        output.y = (Vector3.Dot(camForward + camRight, camForwardAxis));
-
-        Debug.DrawRay(transform.position + (transform.up * 2.5f), new Vector3(output.x, 0f, output.y), Color.cyan);
-
-        return output;
+        return (camRight * input.x + camForward * input.y).normalized;
     }
 
-    /// <summary>
-    /// change a vector from a 3d vector to a 2d vector 
-    /// </summary>
-    public Vector2 Get2dOrientation(Vector3 value, Vector3 normal) // value is any vector, normal always comes in normalized
-    {
-        // project the value so we are on the plane defined by the normal
-        Vector3 modifiedValue = Vector3.ProjectOnPlane(value, normal).normalized;
-        // get the right direction 
-        Vector3 right = Vector3.Cross(normal, modifiedValue).normalized;
-        // get the forward direction translated to the xz plane
-        Vector3 inputDir = Vector3.Cross(right, Vector3.up).normalized;
-        //add the magnitude back to make it as long as at the start
-        Vector2 output = new Vector2(inputDir.x, inputDir.z).normalized * value.magnitude;
-        worldInputDir = output;
-        return output;
-    }
 
-    /// <summary>
-    /// transforms a 2d plane into a 3d one based on a normal  
-    /// </summary>
-    public Vector3 MultiplyByPlane(Vector2 plane, Vector3 planeNormal)
-    {
-        Vector3 planeDir = new Vector3(plane.x, 0f, plane.y);
-        Vector3 translatedRight = Vector3.Cross(planeNormal, planeDir.normalized).normalized;
-        Vector3 translatedForward = Vector3.Cross(translatedRight, planeNormal).normalized;
-        Vector3 output = translatedForward * plane.magnitude;
-        return output;
-    }
-
-    private void OnDrawGizmos()
-    {
-        Gizmos.color = Color.blue;
-        Gizmos.DrawWireSphere(transform.position + transform.up * _height, _castRadius);
-        Gizmos.color = Color.cyan;
-        Gizmos.DrawWireSphere((transform.position + (transform.up * _height)) + -transform.up * _castLength, _castRadius);
-    }
-
-    /// <summary>
-    /// Logic for the horizontal movment
-    /// </summary>
-    /// <param name="currentVelocity">Velocity from the player before beeing modified</param>
-    /// <param name="input">Target direction for the player</param>
-    /// <returns>new Velocity for the player</returns>
-    public Vector2 Movement(Vector2 currentVelocity, Vector2 input)
-    {
-        //reduction of velocity by change of direction
-        currentVelocity *= VelocityRemaining(currentVelocity.normalized, input);
-
-        //acceleration
-        float targetVelSq = _targetVelocity * _targetVelocity;
-        if (currentVelocity.sqrMagnitude < targetVelSq)
-        {
-            currentVelocity += (input * _acceleration);
-            if (currentVelocity.sqrMagnitude > targetVelSq)
-            {
-                float mag = Mathf.Clamp(currentVelocity.magnitude, 0f, _targetVelocity);
-                currentVelocity = mag * currentVelocity.normalized;
-            }
-        }
-
-        //slide off
-        if (Sliding)
-        {
-            Vector3 slideDirection = Vector3.ProjectOnPlane(Vector3.down, SlideNormal).normalized;
-            Vector3 slideVelocity = Vector3.ProjectOnPlane(new Vector3(currentVelocity.x, 0f, currentVelocity.y), SlideNormal);
-            currentVelocity = new Vector2(slideVelocity.x, slideVelocity.z);
-        }
-
-        return currentVelocity;
-    }
+    // Nota: Las antiguas funciones 2D (CameraOritentedMovement, Get2dOrientation, MultiplyByPlane y Movement)
+    // fueron reemplazadas por la lógica matemática en 3D de PlayerHorizontalMovement y GetWorldMovementDirection.
 
     public void SubscribeInputJump()
     {
@@ -339,7 +373,7 @@ public class PlayerStateMachine : StateMachine
         JumpBufferCounter = 0f;
 
         currentForceGravity = Vector3.zero;
-        _horizontalVelocity = Vector3.zero;
+        _currentHorizontalVelocity = Vector3.zero;
 
         // Ignora el spike de velocidad del CharacterController generado durante el vault
         _forceZeroVelocityNextFrame = true;
@@ -367,18 +401,12 @@ public class PlayerStateMachine : StateMachine
     }
 
 
-    private Vector3 _horizontalVelocity; // Stores horizontal velocity during sliding
-    [SerializeField] float scalarHVelocity = 50f;
     private Vector3 currentForceGravity = Vector3.zero;
 
     public void ApplyGravity()
     {
         if (Grounded)
         {
-            // Limpiar velocidad horizontal acumulada al aterrizar.
-            // Si no se borra aqui, se aplica en cada salto futuro como una direccion fantasma.
-            _horizontalVelocity = Vector3.zero;
-
             currentForceGravity = (_gravityDir * _gravityForce) * Time.deltaTime;
             Vector3 groundedGravity = Vector3.ProjectOnPlane(_gravityDir * _gravityForce, GroundNormal.normalized);
             cc.Move((GravityDir * _gravityForce) * Time.deltaTime);
@@ -389,14 +417,12 @@ public class PlayerStateMachine : StateMachine
             {
                 currentForceGravity = Vector3.zero;
                 Vector3 slideDirection = Vector3.ProjectOnPlane(Vector3.down, SlideNormal).normalized;
-                _horizontalVelocity += Vector3.ProjectOnPlane(cc.velocity, SlideNormal);
-                _horizontalVelocity.y = 0f;
                 cc.Move(slideDirection * _gravityForce * Time.deltaTime);
             }
             else
             {
                 currentForceGravity += (_gravityDir * _gravityForce) * Time.deltaTime;
-                cc.Move((currentForceGravity + (_horizontalVelocity.normalized * scalarHVelocity)) * Time.deltaTime);
+                cc.Move(currentForceGravity * Time.deltaTime);
             }
         }
     }
@@ -414,6 +440,127 @@ public class PlayerStateMachine : StateMachine
         }
     }
 
+    // =====================================================================
+    //  WALL-RUN — Detección de paredes laterales con Raycast
+    // =====================================================================
+
+    /// <summary>
+    /// Lanza un raycast hacia la DERECHA del jugador para detectar una pared.
+    /// Origen: centro del jugador (a media altura), dirección: transform.right
+    /// </summary>
+    /// <param name="hit">Información del impacto si se encuentra pared</param>
+    /// <returns>true si hay pared a la derecha dentro de _wallCheckDistance</returns>
+    public bool CheckWallRight(out RaycastHit hit)
+    {
+        return Physics.Raycast(
+            transform.position + transform.up * 0.5f,   // Origen ligeramente elevado
+            transform.right,                             // Dirección: derecha del jugador
+            out hit,
+            _wallCheckDistance,                          // Distancia máxima de detección
+            _wallRunMask                                 // Solo capas marcadas como pared
+        );
+    }
+
+    /// <summary>
+    /// Lanza un raycast hacia la IZQUIERDA del jugador para detectar una pared.
+    /// Origen: centro del jugador (a media altura), dirección: -transform.right
+    /// </summary>
+    /// <param name="hit">Información del impacto si se encuentra pared</param>
+    /// <returns>true si hay pared a la izquierda dentro de _wallCheckDistance</returns>
+    public bool CheckWallLeft(out RaycastHit hit)
+    {
+        return Physics.Raycast(
+            transform.position + transform.up * 0.5f,   // Origen ligeramente elevado
+            -transform.right,                            // Dirección: izquierda del jugador
+            out hit,
+            _wallCheckDistance,                          // Distancia máxima de detección
+            _wallRunMask                                 // Solo capas marcadas como pared
+        );
+    }
+
+    /// <summary>
+    /// Evalúa si el jugador cumple TODAS las condiciones para iniciar un wall-run:
+    /// 1. Debe estar en el aire (no grounded)
+    /// 2. Debe tener suficiente velocidad horizontal (>= _wallRunMinSpeed)
+    /// 3. Debe haber una pared a la izquierda O a la derecha
+    /// </summary>
+    /// <returns>true si se puede iniciar wall-run</returns>
+    public bool CanWallRun()
+    {
+        // No se puede iniciar wall-run desde el suelo
+        if (Grounded) return false;
+
+        // Comprobar que el jugador lleva suficiente velocidad horizontal (usando la inercia real)
+        Vector3 horizontalVel = new Vector3(_currentHorizontalVelocity.x, 0f, _currentHorizontalVelocity.z);
+        if (horizontalVel.magnitude < _wallRunMinSpeed) return false;
+
+        // Detectar pared a cualquier lado
+        return CheckWallRight(out _) || CheckWallLeft(out _);
+    }
+
+    // =====================================================================
+    //  CAMERA TILT — Rotación suave del eje Z de la cámara
+    // =====================================================================
+
+    /// <summary>
+    /// Establece el ángulo objetivo del tilt de cámara.
+    /// Valor positivo = pared a la izquierda (cámara inclina a la derecha del jugador).
+    /// Valor negativo = pared a la derecha (cámara inclina a la izquierda del jugador).
+    /// Valor 0 = sin tilt (posición neutral).
+    /// </summary>
+    /// <param name="targetAngle">Ángulo Z objetivo en grados</param>
+    public void SetCameraTilt(float targetAngle)
+    {
+        _targetCameraTilt = targetAngle;
+    }
+
+    /// <summary>
+    /// Interpola suavemente el tilt actual hacia el tilt objetivo.
+    /// Se llama desde LateUpdate para que se aplique después de toda la lógica de cámara.
+    /// Usa Mathf.Lerp con _wallRunCameraTiltSpeed para una transición suave.
+    /// </summary>
+    private void UpdateCameraTilt()
+    {
+        // Lerp suave del ángulo actual hacia el objetivo
+        _currentCameraTilt = Mathf.Lerp(
+            _currentCameraTilt,
+            _targetCameraTilt,
+            _wallRunCameraTiltSpeed * Time.deltaTime
+        );
+
+        // Aplicar la rotación Z al transform de la cámara (si está asignado)
+        if (_cameraTiltTarget != null)
+        {
+            Vector3 euler = _cameraTiltTarget.localEulerAngles;
+            euler.z = _currentCameraTilt;
+            _cameraTiltTarget.localEulerAngles = euler;
+        }
+    }
+
+    /// <summary>
+    /// Aplica un impulso de salida del wall-run al CharacterController.
+    /// Combina fuerza lateral (alejándose de la pared) + fuerza vertical (hacia arriba).
+    /// Se usa desde PlayerWallRunState al salir por salto.
+    /// </summary>
+    /// <param name="wallNormal">Normal de la pared (apunta hacia fuera de la pared)</param>
+    public void ApplyWallRunExitImpulse(Vector3 wallNormal)
+    {
+        // Resetear la gravedad acumulada para que el impulso vertical sea limpio
+        currentForceGravity = Vector3.zero;
+
+        // Impulso combinado: lateral (normal de pared) + vertical (arriba)
+        Vector3 exitVelocity = wallNormal * _wallRunExitForce     // Fuerza que aleja de la pared
+                             + Vector3.up * _wallRunExitUpForce;   // Fuerza hacia arriba
+
+        // Aplicar la parte vertical a la gravedad
+        currentForceGravity = Vector3.up * _wallRunExitUpForce;
+        
+        // Inyectar el impulso lateral directo en nuestra inercia horizontal para no perderlo
+        _currentHorizontalVelocity = wallNormal * _wallRunExitForce;
+
+        cc.Move(exitVelocity * Time.deltaTime);
+    }
+
     //  VAULT DETECTION
     // =====================================================================
     /// <summary>
@@ -427,7 +574,7 @@ public class PlayerStateMachine : StateMachine
 
         // Si el jugador se mueve significativamente ALEJANDOSE del obstaculo, no hacer vault.
         // Esto evita el vault hacia atras cuando caes de una plataforma mirando hacia ella.
-        Vector3 horizontalVel = new Vector3(cc.velocity.x, 0f, cc.velocity.z);
+        Vector3 horizontalVel = new Vector3(_currentHorizontalVelocity.x, 0f, _currentHorizontalVelocity.z);
         if (horizontalVel.magnitude > 1.0f && Vector3.Dot(horizontalVel.normalized, forward) < -0.3f)
             return false;
 

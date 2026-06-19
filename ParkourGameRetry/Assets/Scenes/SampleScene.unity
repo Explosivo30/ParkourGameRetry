@@ -132,7 +132,7 @@ GameObject:
   - component: {fileID: 4141570}
   - component: {fileID: 4141569}
   - component: {fileID: 4141568}
-  m_Layer: 3
+  m_Layer: 6
   m_Name: Ground (2)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -3141,7 +3141,7 @@ GameObject:
   - component: {fileID: 256166106}
   - component: {fileID: 256166105}
   - component: {fileID: 256166104}
-  m_Layer: 3
+  m_Layer: 6
   m_Name: Ground (4)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -11171,6 +11171,11 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!4 &1402086163 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 4666897098625950039, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
+  m_PrefabInstance: {fileID: 3481018690724442485}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &1429821058
 GameObject:
   m_ObjectHideFlags: 0
@@ -11184,7 +11189,7 @@ GameObject:
   - component: {fileID: 1429821062}
   - component: {fileID: 1429821061}
   - component: {fileID: 1429821060}
-  m_Layer: 3
+  m_Layer: 6
   m_Name: Ground (3)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -16861,7 +16866,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _jumpForce
-      value: 4
+      value: 10
       objectReference: {fileID: 0}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _castLength
@@ -16873,19 +16878,43 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _acceleration
-      value: 7.41
+      value: 120
+      objectReference: {fileID: 0}
+    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
+      propertyPath: _deceleration
+      value: 70
+      objectReference: {fileID: 0}
+    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
+      propertyPath: _gravityForce
+      value: 21
       objectReference: {fileID: 0}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _targetVelocity
-      value: 20
+      value: 28
       objectReference: {fileID: 0}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _vaultArcHeight
       value: 2.18
       objectReference: {fileID: 0}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
+      propertyPath: _airAcceleration
+      value: 8.32
+      objectReference: {fileID: 0}
+    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
+      propertyPath: _airDeceleration
+      value: 4.42
+      objectReference: {fileID: 0}
+    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
+      propertyPath: _cameraTiltTarget
+      value: 
+      objectReference: {fileID: 1402086163}
+    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _vaultMask.m_Bits
       value: 4294967295
+      objectReference: {fileID: 0}
+    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
+      propertyPath: _wallRunMask.m_Bits
+      value: 64
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
