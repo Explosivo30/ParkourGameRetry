@@ -65,11 +65,11 @@ public class PlayerWallRunState : PlayerBaseState
         }
 
         // ---- Activar tilt de cámara ----
-        // Pared a la derecha → tilt negativo (cámara inclina hacia la izquierda)
-        // Pared a la izquierda → tilt positivo (cámara inclina hacia la derecha)
+        // Pared a la derecha -> tilt positivo
+        // Pared a la izquierda -> tilt negativo
         float tiltAngle = isWallRight
-            ? -stateMachine.WallRunCameraTiltAngle
-            :  stateMachine.WallRunCameraTiltAngle;
+            ?  stateMachine.WallRunCameraTiltAngle
+            : -stateMachine.WallRunCameraTiltAngle;
         stateMachine.SetCameraTilt(tiltAngle);
     }
 
@@ -134,8 +134,18 @@ public class PlayerWallRunState : PlayerBaseState
         // Al pulsar salto, se aplica un impulso de salida (lateral + vertical)
         if (stateMachine.JumpPressed)
         {
-            exitedByJump = true;
+            // 1. Consumir el input ANTES de cambiar de estado
+            //    Si no lo consumimos aqui, IdleState detectara JumpPressed=true en su primer Tick
+            //    y llamara ExecuteJump(), que sobrescribe currentForceGravity sin el componente lateral.
             stateMachine.ClearJumpInputFrame();
+            stateMachine.JumpBufferCounter = 0f;
+
+            // 2. Aplicar el impulso de salida directamente aqui, antes del SwitchState
+            //    Asi IdleState recibe la velocidad ya seteada y no la pisa.
+            stateMachine.ApplyWallRunExitImpulse(wallNormal);
+
+            // 3. Marcar que salimos por salto para que Exit() NO lo aplique de nuevo
+            exitedByJump = false;
             stateMachine.SwitchState(typeof(PlayerIdleState));
             return;
         }

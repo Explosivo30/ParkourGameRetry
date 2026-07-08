@@ -3,21 +3,26 @@ using UnityEngine;
 /// <summary>
 /// Estado principal del jugador: gestiona movimiento en suelo, aire, salto y transiciones.
 /// A pesar del nombre "Idle", este estado maneja TODO el gameplay básico:
-/// correr, caer, saltar, detectar vault y detectar wall-run.
+/// correr, caer, saltar, detectar vault, wall-run, slide, dash, ledge grab y landing roll.
 /// </summary>
 public class PlayerIdleState : PlayerBaseState
 {
+    // Track para detectar aterrizajes (landing roll / hard landing)
+    private bool _wasGroundedLastFrame = true;
+    private float _lastVerticalSpeed;
+
     public PlayerIdleState(PlayerStateMachine stateMachine) : base(stateMachine)
     {
     }
 
     // =====================================================================
-    //  ENTER — Se suscribe a los eventos de salto al entrar al estado
+    //  ENTER — Se suscribe a los eventos de input al entrar al estado
     // =====================================================================
     public override void Enter()
     {
-        // Suscribirse al input de salto para recibir JumpPressed/JumpHeld
+        // Suscribirse al input de salto y crouch
         stateMachine.SubscribeInputJump();
+        stateMachine.SubscribeInputCrouch();
     }
 
     // =====================================================================
@@ -26,53 +31,117 @@ public class PlayerIdleState : PlayerBaseState
     public override void Tick(float deltaTime)
     {
         // ---- ROTACIÓN DEL JUGADOR ----
-        // Rota el transform del jugador en Y según el input horizontal del ratón/stick
         stateMachine.PlayerLook();
 
         // ---- DETECCIÓN DE SUELO ----
-        // SphereCast hacia abajo para determinar si está en el suelo o en pendiente
         stateMachine.GroundDetection();
 
         // ---- COYOTE TIME ----
-        // Permite saltar brevemente después de abandonar una plataforma
         stateMachine.TickCoyoteTime(Time.deltaTime);
 
+        // ---- MOMENTUM SYSTEM ----
+        // (Movido a PlayerStateMachine.LateUpdate para que no se atasque)
+
         // ---- GRAVEDAD ----
-        // Aplica gravedad acumulativa. En suelo: fuerza mínima. En aire: acumula.
         stateMachine.ApplyGravity();
 
         // ---- MOVIMIENTO HORIZONTAL ----
-        // 1. GetInput() → Vector2 normalizado del WASD/stick
-        // 2. GetWorldMovementDirection() → lo transforma a dirección relativa a la cámara en el mundo 3D
-        // 3. PlayerHorizontalMovement() → aplica fricción y aceleración aditiva
         stateMachine.PlayerHorizontalMovement(stateMachine.GetWorldMovementDirection(stateMachine.GetInput()));
 
+        // Leer el estado de crouch directamente del InputReader para fiabilidad
+        bool crouchHeld = stateMachine.Controls != null && stateMachine.Controls.CrouchHeld;
+
+        // ---- DETECCIÓN DE ATERRIZAJE ----
+        // Comprobar si acabamos de aterrizar de una caída alta
+        if (stateMachine.Grounded && !_wasGroundedLastFrame)
+        {
+            if (_lastVerticalSpeed > stateMachine.RollMinFallSpeed)
+            {
+                // Caída alta detectada
+                if (crouchHeld)
+                {
+                    // ---- LANDING ROLL ----
+                    // El jugador pulsó crouch al aterrizar → recompensa con roll
+                    stateMachine.SwitchState(typeof(PlayerLandingRollState));
+                    _wasGroundedLastFrame = stateMachine.Grounded;
+                    _lastVerticalSpeed = stateMachine.GetVerticalSpeed();
+                    return;
+                }
+                else
+                {
+                    // ---- HARD LANDING (CASTIGO) ----
+                    // No hizo roll → pierde velocidad como penalización
+                    stateMachine.CurrentHorizontalVelocity *= stateMachine.HardLandingPenalty;
+                }
+            }
+        }
+
         // ---- INPUT DE SALTO ----
-        // Decrementa el buffer de salto (permite saltar un poco antes de aterrizar)
         stateMachine.DecrementJumpBuffer(deltaTime);
         bool wantsToJump = stateMachine.JumpPressed || stateMachine.JumpBufferCounter > 0f;
 
+        // =====================================================================
+        //  PRIORIDADES DE TRANSICIÓN (ordenadas por importancia)
+        // =====================================================================
+
         // ---- PRIORIDAD 1: VAULT ----
-        // Si quiere saltar y hay un obstáculo vaultable enfrente, hacer vault
         if (wantsToJump && stateMachine.CanVault())
         {
             stateMachine.JumpBufferCounter = 0f;
             stateMachine.SwitchState(typeof(PlayerVaultState));
+            _wasGroundedLastFrame = stateMachine.Grounded;
+            _lastVerticalSpeed = stateMachine.GetVerticalSpeed();
             return;
         }
 
         // ---- PRIORIDAD 2: WALL-RUN ----
-        // Si está en el aire y hay una pared lateral con suficiente velocidad, wall-run
-        // Se comprueba cada frame para que el jugador se adhiera automáticamente al
-        // saltar cerca de una pared o al caer contra ella
         if (!stateMachine.Grounded && stateMachine.CanWallRun())
         {
             stateMachine.SwitchState(typeof(PlayerWallRunState));
+            _wasGroundedLastFrame = stateMachine.Grounded;
+            _lastVerticalSpeed = stateMachine.GetVerticalSpeed();
             return;
         }
 
-        // ---- PRIORIDAD 3: SALTO NORMAL ----
-        // Solo si está en el suelo o dentro del coyote time
+        // ---- PRIORIDAD 3: LEDGE GRAB ----
+        // En el aire, cerca de un borde demasiado alto para vault
+        if (!stateMachine.Grounded && stateMachine.CanLedgeGrab())
+        {
+            stateMachine.SwitchState(typeof(PlayerLedgeGrabState));
+            _wasGroundedLastFrame = stateMachine.Grounded;
+            _lastVerticalSpeed = stateMachine.GetVerticalSpeed();
+            return;
+        }
+
+        // ---- PRIORIDAD 4: SLIDE ----
+        // En suelo, crouch pulsado, y con suficiente velocidad
+        if (stateMachine.Grounded && crouchHeld)
+        {
+            float currentSpeed = stateMachine.CurrentHorizontalVelocity.magnitude;
+            if (currentSpeed >= stateMachine.SlideMinSpeed)
+            {
+                stateMachine.SwitchState(typeof(PlayerSlideState));
+                _wasGroundedLastFrame = stateMachine.Grounded;
+                _lastVerticalSpeed = stateMachine.GetVerticalSpeed();
+                return;
+            }
+        }
+
+        // ---- PRIORIDAD 5: DASH ----
+        // Sprint pulsado y cooldown cumplido (funciona en suelo y aire)
+        if (!crouchHeld && stateMachine.Controls != null && stateMachine.Controls.SprintHeld)
+        {
+            float timeSinceLastDash = Time.time - stateMachine.LastDashTime;
+            if (timeSinceLastDash >= stateMachine.DashCooldown)
+            {
+                stateMachine.SwitchState(typeof(PlayerDashState));
+                _wasGroundedLastFrame = stateMachine.Grounded;
+                _lastVerticalSpeed = stateMachine.GetVerticalSpeed();
+                return;
+            }
+        }
+
+        // ---- PRIORIDAD 6: SALTO NORMAL ----
         bool canJump = stateMachine.Grounded || stateMachine.CoyoteTimeCounter > 0f;
 
         if (wantsToJump && canJump)
@@ -81,8 +150,11 @@ public class PlayerIdleState : PlayerBaseState
         }
 
         // ---- LIMPIEZA DE INPUT ----
-        // Evita que el flag JumpPressed se quede activo y cause saltos infinitos
         stateMachine.ClearJumpInputFrame();
+
+        // ---- Track estado del frame para detección de aterrizaje ----
+        _wasGroundedLastFrame = stateMachine.Grounded;
+        _lastVerticalSpeed = stateMachine.GetVerticalSpeed();
     }
 
     // =====================================================================
@@ -90,15 +162,14 @@ public class PlayerIdleState : PlayerBaseState
     // =====================================================================
     public override void FixedTick(float fixedDeltaTime)
     {
-        // No hay lógica de física en FixedUpdate para este estado
     }
 
     // =====================================================================
-    //  EXIT — Se desuscribe de los eventos de salto al salir del estado
+    //  EXIT — Se desuscribe de los eventos al salir del estado
     // =====================================================================
     public override void Exit()
     {
-        // Desuscribirse del input de salto para evitar leaks de eventos
         stateMachine.UnsubscribeInputJump();
+        stateMachine.UnsubscribeInputCrouch();
     }
 }

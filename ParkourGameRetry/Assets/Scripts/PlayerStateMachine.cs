@@ -6,6 +6,7 @@ public class PlayerStateMachine : StateMachine
 {
     //Control Start
     InputReader controls;
+    public InputReader Controls => controls;
     //Control End
 
     //----- START GROUND DETECTION
@@ -41,15 +42,16 @@ public class PlayerStateMachine : StateMachine
 
     //Variables 
     [ExcelPort]
-    [SerializeField] float _acceleration = 12f;        // Fuerza de aceleración al mantener input
+    [SerializeField] float _acceleration = 8f;         // Fuerza de aceleración al mantener input
     [ExcelPort]
     [SerializeField] float _targetVelocity = 10f;      // Velocidad máxima horizontal
 
     [Header("Desaceleración")]
-    [SerializeField] float _deceleration = 8f;          // Fuerza de frenado cuando se suelta el input
+    [SerializeField] float _deceleration = 1.5f;       // Fricción leve (conserva el momentum extra)
+    [SerializeField] float _brakingDeceleration = 20f; // Fuerza de frenado fuerte al soltar el input
     
     [Header("Air Control")]
-    [SerializeField] float _airAcceleration = 5f;       // Aceleración/maniobrabilidad en el aire
+    [SerializeField] float _airAcceleration = 3f;       // Aceleración/maniobrabilidad en el aire
     [SerializeField] float _airDeceleration = 0f;       // Freno en el aire (0 = conserva toda la inercia)
 
     [SerializeField, Range(0f, 1f)] float _turnaroundStrength;
@@ -60,6 +62,127 @@ public class PlayerStateMachine : StateMachine
     public Vector3 CurrentHorizontalVelocity { get { return _currentHorizontalVelocity; } set { _currentHorizontalVelocity = value; } }
     private Vector3 _currentHorizontalVelocity;
     //---- END PLAYER OWN MOVEMENT
+
+    // =====================================================================
+    //  SLIDE — Deslizamiento en suelo estilo Mirror's Edge / Apex
+    // =====================================================================
+    [Header("Slide")]
+    [SerializeField] float _slideSpeed = 12f;              // Velocidad inicial del slide
+    [SerializeField] float _slideDuration = 0.8f;           // Duración máxima del slide
+    [SerializeField] float _slideMinSpeed = 5f;              // Velocidad mínima para poder iniciar slide
+    [SerializeField] float _slideFriction = 6f;              // Fricción durante el slide
+    [SerializeField] float _slideSlopeBoost = 15f;           // Velocidad extra al deslizar cuesta abajo
+    [SerializeField] float _slideHeightReduction = 0.5f;     // Cuánto se reduce la altura del CC al deslizar
+    [SerializeField] float _slideCameraDropSpeed = 10f;      // Velocidad a la que la cámara baja al deslizar
+
+    public float SlideSpeed => _slideSpeed;
+    public float SlideDuration => _slideDuration;
+    public float SlideMinSpeed => _slideMinSpeed;
+    public float SlideFriction => _slideFriction;
+    public float SlideSlopeBoost => _slideSlopeBoost;
+    public float SlideHeightReduction => _slideHeightReduction;
+    public float SlideCameraDropSpeed => _slideCameraDropSpeed;
+
+    private float _originalCCHeight;
+    private Vector3 _originalCCCenter;
+    public float OriginalCCHeight => _originalCCHeight;
+    public Vector3 OriginalCCCenter => _originalCCCenter;
+
+    // =====================================================================
+    //  DASH — Impulso rápido con cooldown
+    // =====================================================================
+    [Header("Dash")]
+    [SerializeField] float _dashForce = 20f;              // Fuerza del dash
+    [SerializeField] float _dashDuration = 0.15f;          // Duración del dash
+    [SerializeField] float _dashCooldown = 1.5f;           // Cooldown entre dashes
+
+    public float DashForce => _dashForce;
+    public float DashDuration => _dashDuration;
+    public float DashCooldown => _dashCooldown;
+    public float LastDashTime { get; set; } = -999f;
+
+    // =====================================================================
+    //  LEDGE GRAB — Colgarse de bordes altos
+    // =====================================================================
+    [Header("Ledge Grab")]
+    [SerializeField] float _ledgeCheckDistance = 1.0f;     // Distancia del raycast hacia adelante
+    [SerializeField] float _ledgeGrabMaxHeight = 2.5f;     // Altura máxima para agarrarse
+    [SerializeField] float _ledgeGrabMinHeight = 1.6f;     // Altura mínima (por debajo = vault)
+    [SerializeField] float _ledgeClimbDuration = 0.4f;     // Duración de la animación de subir
+    [SerializeField] float _ledgeJumpForce = 7f;           // Fuerza de salto desde ledge
+
+    public float LedgeCheckDistance => _ledgeCheckDistance;
+    public float LedgeGrabMaxHeight => _ledgeGrabMaxHeight;
+    public float LedgeGrabMinHeight => _ledgeGrabMinHeight;
+    public float LedgeClimbDuration => _ledgeClimbDuration;
+    public float LedgeJumpForce => _ledgeJumpForce;
+    public Vector3 LedgeGrabPosition { get; set; }
+    public Vector3 LedgeClimbTarget { get; set; }
+
+    // =====================================================================
+    //  LANDING ROLL — Voltereta al aterrizar de caída alta
+    // =====================================================================
+    [Header("Landing Roll")]
+    [SerializeField] float _rollMinFallSpeed = 8f;         // Velocidad mínima de caída para activar roll
+    [SerializeField] float _rollDuration = 0.5f;            // Duración del roll
+    [SerializeField] float _rollSpeedBoost = 1.2f;          // Multiplicador de velocidad durante roll
+    [SerializeField] float _hardLandingPenalty = 0.3f;       // % de velocidad que pierdes si NO haces roll
+    [SerializeField] float _rollCameraAngle = 15f;           // Inclinación de cámara durante roll
+
+    public float RollMinFallSpeed => _rollMinFallSpeed;
+    public float RollDuration => _rollDuration;
+    public float RollSpeedBoost => _rollSpeedBoost;
+    public float HardLandingPenalty => _hardLandingPenalty;
+    public float RollCameraAngle => _rollCameraAngle;
+
+    // =====================================================================
+    //  GRAPPLE — Gancho que impulsa al jugador hacia un punto
+    // =====================================================================
+    [Header("Grapple")]
+    [SerializeField] float _grappleMaxDistance = 30f;      // Distancia máxima del gancho
+    [SerializeField] float _grappleSpeed = 20f;             // Velocidad de viaje
+    [SerializeField] float _grappleExitBoost = 1.5f;        // Multiplicador de velocidad al llegar
+    [SerializeField] LayerMask _grappleMask;                // Capas donde se puede enganchar
+
+    public float GrappleMaxDistance => _grappleMaxDistance;
+    public float GrappleSpeed => _grappleSpeed;
+    public float GrappleExitBoost => _grappleExitBoost;
+    public LayerMask GrappleMask => _grappleMask;
+    public Vector3 GrappleTarget { get; set; }
+
+    // =====================================================================
+    //  ZIPLINE — Rails/cables deslizantes
+    // =====================================================================
+    [Header("Zipline")]
+    [SerializeField] float _ziplineSpeed = 15f;            // Velocidad base en zipline
+    [SerializeField] float _ziplineSpeedBoost = 1.3f;       // Multiplicador si vienes con impulso
+    [SerializeField] float _ziplineExitUpForce = 4f;        // Fuerza vertical al saltar desde zipline
+
+    public float ZiplineSpeed => _ziplineSpeed;
+    public float ZiplineSpeedBoost => _ziplineSpeedBoost;
+    public float ZiplineExitUpForce => _ziplineExitUpForce;
+
+    // =====================================================================
+    //  MOMENTUM SYSTEM — Multiplicador por encadenar parkour
+    // =====================================================================
+    [Header("Momentum System")]
+    [SerializeField] float _momentumMultiplierPerChain = 0.1f;  // Bonus de velocidad por cada acción encadenada
+    [SerializeField] float _momentumMaxMultiplier = 1.5f;        // Multiplicador máximo
+    [SerializeField] float _momentumDecayTime = 2f;              // Tiempo hasta perder el combo
+    [SerializeField] float _microSlowMoDuration = 0.05f;         // Duración del slow-mo al encadenar
+
+    public float MomentumMultiplierPerChain => _momentumMultiplierPerChain;
+    public float MomentumMaxMultiplier => _momentumMaxMultiplier;
+    public float MomentumDecayTime => _momentumDecayTime;
+    public float MicroSlowMoDuration => _microSlowMoDuration;
+
+    // Runtime momentum tracking
+    public int MomentumChainCount { get; set; }
+    public float MomentumMultiplier => 1f + Mathf.Min(MomentumChainCount * _momentumMultiplierPerChain, _momentumMaxMultiplier - 1f);
+    public float LastParkourActionTime { get; set; } = -999f;
+
+    // ---- Crouch input ----
+    public bool CrouchPressed { get; private set; }
 
 
     // =====================================================================
@@ -158,10 +281,20 @@ public class PlayerStateMachine : StateMachine
 
     private void Start()
     {
+        // Guardar dimensiones originales del CharacterController para restaurar tras slide
+        _originalCCHeight = cc.height;
+        _originalCCCenter = cc.center;
+
         // Registrar todos los estados disponibles en la máquina de estados
         AddState(new PlayerIdleState(this));
         AddState(new PlayerVaultState(this));
-        AddState(new PlayerWallRunState(this));  // Nuevo estado de wall-run
+        AddState(new PlayerWallRunState(this));
+        AddState(new PlayerSlideState(this));
+        AddState(new PlayerDashState(this));
+        AddState(new PlayerLedgeGrabState(this));
+        AddState(new PlayerLandingRollState(this));
+        AddState(new PlayerGrappleState(this));
+        AddState(new PlayerZiplineState(this));
         
         SwitchState(typeof(PlayerIdleState));
     }
@@ -172,6 +305,7 @@ public class PlayerStateMachine : StateMachine
     private void LateUpdate()
     {
         UpdateCameraTilt();
+        TickMomentum();
     }
 
 
@@ -239,13 +373,30 @@ public class PlayerStateMachine : StateMachine
         currentVelocity = Vector3.ProjectOnPlane(currentVelocity, GroundNormal);
 
         float accel = Grounded ? _acceleration : _airAcceleration;
-        float decel = Grounded ? _deceleration : _airDeceleration;
+        
+        // Decidimos la fuerza de deceleración (fricción leve vs freno fuerte)
+        float currentDecelValue;
+        if (Grounded)
+        {
+            if (inputDir.sqrMagnitude < 0.01f)
+            {
+                currentDecelValue = _brakingDeceleration; // Frenar al soltar
+            }
+            else
+            {
+                currentDecelValue = _deceleration; // Fricción leve mientras te mueves
+            }
+        }
+        else
+        {
+            currentDecelValue = _airDeceleration;
+        }
 
-        // 1. APLICAR FRICCIÓN SIEMPRE (Como en la vida real)
+        // 1. APLICAR FRICCIÓN/FRENADO SIEMPRE
         float speed = currentVelocity.magnitude;
         if (speed > 0)
         {
-            float drop = decel * Time.deltaTime;
+            float drop = currentDecelValue * Time.deltaTime;
             
             // Freno extra si estamos girando drásticamente en el suelo (turnaround)
             if (inputDir.sqrMagnitude > 0.01f && Grounded)
@@ -253,7 +404,8 @@ public class PlayerStateMachine : StateMachine
                 float dot = Vector3.Dot(currentVelocity.normalized, inputDir);
                 if (dot < 0) 
                 {
-                    drop += (decel * -dot * _turnaroundStrength * Time.deltaTime);
+                    // Al cambiar de dirección bruscamente, usamos el freno fuerte para ser ágiles
+                    drop += (_brakingDeceleration * -dot * _turnaroundStrength * Time.deltaTime);
                 }
             }
 
@@ -293,8 +445,36 @@ public class PlayerStateMachine : StateMachine
         _currentHorizontalVelocity = currentVelocity;
 
         // Mover el CharacterController (horizontalmente, la gravedad va por separado)
+        Vector3 posBeforeMove = transform.position;
         cc.Move(currentVelocity * Time.deltaTime);
-    }
+
+        // ---- DETECCIÓN DE COLISIÓN ----
+        // Comparar el desplazamiento real con el deseado.
+        // Si el CC chocó con algo, el desplazamiento real será menor.
+        // Ajustamos _currentHorizontalVelocity para que no conserve momentum fantasma.
+        if (currentVelocity.sqrMagnitude > 0.01f)
+        {
+            Vector3 actualDisplacement = transform.position - posBeforeMove;
+            Vector3 intendedDisplacement = currentVelocity * Time.deltaTime;
+
+            // Ignorar Y (la gravedad va por otro lado)
+            actualDisplacement.y = 0f;
+            intendedDisplacement.y = 0f;
+
+            if (intendedDisplacement.sqrMagnitude > 0.0001f)
+            {
+                float movementRatio = actualDisplacement.magnitude / intendedDisplacement.magnitude;
+
+                // Si nos movimos menos del 80% de lo que queríamos, hay colisión
+                if (movementRatio < 0.8f)
+                {
+                    // Reducir la velocidad al ratio real del movimiento
+                    // Esto hace que si chocas contra una pared, pierdas el momentum
+                    _currentHorizontalVelocity *= movementRatio;
+                }
+            }
+        }
+        }
 
     /// <summary>
     /// Convierte el input 2D en una dirección 3D basada en la rotación de la cámara.
@@ -452,12 +632,14 @@ public class PlayerStateMachine : StateMachine
     /// <returns>true si hay pared a la derecha dentro de _wallCheckDistance</returns>
     public bool CheckWallRight(out RaycastHit hit)
     {
+        // Origen al nivel del pecho (1.0f) para NO detectar paredes cuando estamos en el suelo.
+        // A 0.5f detectaba paredes incluso al estar de pie junto a ellas.
         return Physics.Raycast(
-            transform.position + transform.up * 0.5f,   // Origen ligeramente elevado
-            transform.right,                             // Dirección: derecha del jugador
+            transform.position + transform.up * 1.0f,    // Origen al nivel del pecho
+            transform.right,                              // Dirección: derecha del jugador
             out hit,
-            _wallCheckDistance,                          // Distancia máxima de detección
-            _wallRunMask                                 // Solo capas marcadas como pared
+            _wallCheckDistance,                           // Distancia máxima de detección
+            _wallRunMask                                  // Solo capas marcadas como pared
         );
     }
 
@@ -469,12 +651,13 @@ public class PlayerStateMachine : StateMachine
     /// <returns>true si hay pared a la izquierda dentro de _wallCheckDistance</returns>
     public bool CheckWallLeft(out RaycastHit hit)
     {
+        // Origen al nivel del pecho (1.0f) — misma lógica que CheckWallRight
         return Physics.Raycast(
-            transform.position + transform.up * 0.5f,   // Origen ligeramente elevado
-            -transform.right,                            // Dirección: izquierda del jugador
+            transform.position + transform.up * 1.0f,    // Origen al nivel del pecho
+            -transform.right,                             // Dirección: izquierda del jugador
             out hit,
-            _wallCheckDistance,                          // Distancia máxima de detección
-            _wallRunMask                                 // Solo capas marcadas como pared
+            _wallCheckDistance,                           // Distancia máxima de detección
+            _wallRunMask                                  // Solo capas marcadas como pared
         );
     }
 
@@ -610,4 +793,138 @@ public class PlayerStateMachine : StateMachine
         return true;
     }
 
+    // =====================================================================
+    //  CROUCH INPUT — Suscripción/desuscripción para slide y landing roll
+    // =====================================================================
+    public void SubscribeInputCrouch()
+    {
+        controls.OnCrouchStarted += HandleCrouchStarted;
+        controls.OnCrouchCanceled += HandleCrouchCanceled;
+    }
+
+    public void UnsubscribeInputCrouch()
+    {
+        controls.OnCrouchStarted -= HandleCrouchStarted;
+        controls.OnCrouchCanceled -= HandleCrouchCanceled;
+    }
+
+    private void HandleCrouchStarted() { CrouchPressed = true; }
+    private void HandleCrouchCanceled() { CrouchPressed = false; }
+
+    // =====================================================================
+    //  COLLIDER HELPERS — Para reducir/restaurar la altura del CC al deslizar
+    // =====================================================================
+
+    /// <summary>
+    /// Reduce la altura del CharacterController para el slide.
+    /// </summary>
+    public void ShrinkCollider()
+    {
+        cc.height = _originalCCHeight - _slideHeightReduction;
+        cc.center = _originalCCCenter + Vector3.down * (_slideHeightReduction * 0.5f);
+    }
+
+    /// <summary>
+    /// Restaura el CharacterController a sus dimensiones originales.
+    /// </summary>
+    public void RestoreCollider()
+    {
+        cc.height = _originalCCHeight;
+        cc.center = _originalCCCenter;
+    }
+
+    // =====================================================================
+    //  VELOCITY HELPERS
+    // =====================================================================
+
+    /// <summary>
+    /// Devuelve la velocidad vertical actual de caída (positivo = cayendo).
+    /// Usado por PlayerCameraEffects y LandingRoll para medir la intensidad del impacto.
+    /// </summary>
+    public float GetVerticalSpeed()
+    {
+        return Vector3.Dot(currentForceGravity, Vector3.down);
+    }
+
+    // =====================================================================
+    //  MOMENTUM SYSTEM — Registro y tick del sistema de encadenamiento
+    // =====================================================================
+
+    /// <summary>
+    /// Registra una acción de parkour exitosa para el sistema de momentum.
+    /// Si se encadena dentro de MomentumDecayTime, el combo sube.
+    /// En combos > 1, se aplica un micro slow-mo cinematográfico.
+    /// </summary>
+    public void RegisterParkourAction()
+    {
+        if (Time.time - LastParkourActionTime < _momentumDecayTime)
+        {
+            MomentumChainCount++;
+        }
+        else
+        {
+            MomentumChainCount = 1;
+        }
+        LastParkourActionTime = Time.time;
+        
+        // Micro slow-mo al encadenar (solo si es combo de 2+)
+        if (MomentumChainCount > 1)
+        {
+            Time.timeScale = 0.1f;
+            Time.fixedDeltaTime = 0.02f * Time.timeScale;
+        }
+    }
+
+    /// <summary>
+    /// Actualiza el sistema de momentum cada frame.
+    /// Resetea el combo si ha pasado demasiado tiempo.
+    /// Restaura el timeScale si fue ralentizado por el micro slow-mo.
+    /// </summary>
+    public void TickMomentum()
+    {
+        if (Time.time - LastParkourActionTime > _momentumDecayTime)
+        {
+            MomentumChainCount = 0;
+        }
+        // Restaurar time scale si fue ralentizado
+        if (Time.timeScale < 1f)
+        {
+            Time.timeScale = Mathf.MoveTowards(Time.timeScale, 1f, Time.unscaledDeltaTime / _microSlowMoDuration);
+            Time.fixedDeltaTime = 0.02f * Time.timeScale;
+        }
+    }
+
+    // =====================================================================
+    //  LEDGE GRAB DETECTION
+    // =====================================================================
+
+    /// <summary>
+    /// Detecta si hay un borde al que agarrarse (demasiado alto para vault, alcanzable para grab).
+    /// Usa dos raycasts: uno horizontal para encontrar la pared y uno vertical para encontrar el borde.
+    /// </summary>
+    public bool CanLedgeGrab()
+    {
+        if (Grounded) return false;
+        
+        Vector3 forward = new Vector3(transform.forward.x, 0f, transform.forward.z).normalized;
+        
+        // Comprobar si hay una pared enfrente
+        if (!Physics.Raycast(transform.position + Vector3.up * 0.5f, forward, out RaycastHit wallHit, _ledgeCheckDistance, _vaultMask))
+            return false;
+        
+        // Comprobar el borde superior — lanzar raycast hacia abajo desde arriba
+        Vector3 abovePoint = wallHit.point + Vector3.up * _ledgeGrabMaxHeight + forward * 0.1f;
+        if (!Physics.Raycast(abovePoint, Vector3.down, out RaycastHit topHit, _ledgeGrabMaxHeight, _vaultMask))
+            return false;
+        
+        float ledgeHeight = topHit.point.y - transform.position.y;
+        
+        // Debe estar por encima de la altura de vault pero por debajo de la máxima de grab
+        if (ledgeHeight < _ledgeGrabMinHeight || ledgeHeight > _ledgeGrabMaxHeight)
+            return false;
+        
+        LedgeGrabPosition = new Vector3(wallHit.point.x, topHit.point.y - cc.height, wallHit.point.z) + wallHit.normal * 0.1f;
+        LedgeClimbTarget = topHit.point + forward * 0.5f + Vector3.up * 0.1f;
+        return true;
+    }
 }

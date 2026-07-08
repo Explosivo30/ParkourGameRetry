@@ -16,6 +16,16 @@ public class InputReader : MonoBehaviour,InputSystem_Actions.IPlayerActions
     public event Action DodgeEvent;
     public event Action TargetEvent;
 
+    // ---- Crouch events para Slide y Landing Roll ----
+    public event Action OnCrouchStarted;
+    public event Action OnCrouchCanceled;
+    public bool CrouchHeld { get; private set; }
+
+    // ---- Sprint events para Dash ----
+    public event Action OnSprintStarted;
+    public event Action OnSprintCanceled;
+    public bool SprintHeld { get; private set; }
+
     public bool isTargeting = false;
 
     InputSystem_Actions controls;
@@ -40,7 +50,16 @@ public class InputReader : MonoBehaviour,InputSystem_Actions.IPlayerActions
 
     public void OnCrouch(InputAction.CallbackContext context)
     {
-        
+        if (context.started)
+        {
+            CrouchHeld = true;
+            OnCrouchStarted?.Invoke();
+        }
+        if (context.canceled)
+        {
+            CrouchHeld = false;
+            OnCrouchCanceled?.Invoke();
+        }
     }
 
     public void OnInteract(InputAction.CallbackContext context)
@@ -76,7 +95,16 @@ public class InputReader : MonoBehaviour,InputSystem_Actions.IPlayerActions
 
     public void OnSprint(InputAction.CallbackContext context)
     {
-        
+        if (context.started)
+        {
+            SprintHeld = true;
+            OnSprintStarted?.Invoke();
+        }
+        if (context.canceled)
+        {
+            SprintHeld = false;
+            OnSprintCanceled?.Invoke();
+        }
     }
 
 
