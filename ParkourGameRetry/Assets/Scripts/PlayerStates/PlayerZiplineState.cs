@@ -20,7 +20,7 @@ public class PlayerZiplineState : PlayerBaseState
     public override void Enter()
     {
         // Registrar acción de parkour para el sistema de momentum
-        stateMachine.RegisterParkourAction();
+        stateMachine.RegisterParkourAction(ParkourActionType.Zipline);
 
         // Suscribirse al input de salto para poder saltar desde el zipline
         stateMachine.SubscribeInputJump();
@@ -31,11 +31,16 @@ public class PlayerZiplineState : PlayerBaseState
         ziplineDirection.y = 0f;
         ziplineDirection.Normalize();
 
-        // La velocidad es el máximo entre la base y la actual con boost
+        // Boost aditivo limitado por rango: no multiplica el momentum en cada entrada.
         float currentSpeed = stateMachine.CurrentHorizontalVelocity.magnitude;
-        currentZiplineSpeed = Mathf.Max(stateMachine.ZiplineSpeed, currentSpeed * stateMachine.ZiplineSpeedBoost);
+        currentZiplineSpeed = stateMachine.ResolveActionSpeed(
+            currentSpeed,
+            stateMachine.ZiplineSpeed,
+            1f,
+            stateMachine.ZiplineSpeed * (stateMachine.ZiplineSpeedBoost - 1f)
+        );
 
-        // Anular velocidad vertical (no caer mientras estás en el zipline)
+        stateMachine.ResetVerticalVelocity();
         stateMachine.CurrentHorizontalVelocity = ziplineDirection * currentZiplineSpeed;
     }
 

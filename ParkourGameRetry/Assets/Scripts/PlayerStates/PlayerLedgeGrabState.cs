@@ -18,23 +18,33 @@ public class PlayerLedgeGrabState : PlayerBaseState
     private bool isClimbing;
     private float climbTimer;
     private Vector3 climbStartPos;
+    private Vector3 climbLiftPos;
+    private Vector3 entryHorizontalVelocity;
+    private bool controllerDisabledForClimb;
 
     public PlayerLedgeGrabState(PlayerStateMachine stateMachine) : base(stateMachine) { }
 
     public override void Enter()
     {
         // Registrar acción de parkour para el sistema de momentum
-        stateMachine.RegisterParkourAction();
+        stateMachine.RegisterParkourAction(ParkourActionType.LedgeGrab);
 
         // Suscribirse a inputs
         stateMachine.SubscribeInputJump();
         stateMachine.SubscribeInputCrouch();
 
-        // Anular toda velocidad y gravedad — el jugador queda suspendido
+        entryHorizontalVelocity = stateMachine.CurrentHorizontalVelocity;
+
+        // Anular velocidad durante el agarre, conservando una reserva para
+        // el salto de salida.
         stateMachine.CurrentHorizontalVelocity = Vector3.zero;
+        stateMachine.ResetVerticalVelocity();
 
         isClimbing = false;
         climbTimer = 0f;
+        controllerDisabledForClimb = false;
+        if (!stateMachine.CC.enabled)
+            stateMachine.CC.enabled = true;
 
         // Mover al jugador a la posición de agarre
         Vector3 displacement = stateMachine.LedgeGrabPosition - stateMachine.transform.position;
@@ -52,20 +62,37 @@ public class PlayerLedgeGrabState : PlayerBaseState
         if (isClimbing)
         {
             climbTimer += deltaTime;
-            float progress = climbTimer / stateMachine.LedgeClimbDuration;
+            float progress = Mathf.Clamp01(climbTimer / stateMachine.LedgeClimbDuration);
+
+            // Primero subir por fuera de la pared y después avanzar sobre la
+            // superficie. El movimiento diagonal anterior chocaba con la esquina.
+            Vector3 targetPos = stateMachine.LedgeClimbTarget;
+            Vector3 newPos;
+            const float liftPhaseEnd = 0.62f;
+            if (progress < liftPhaseEnd)
+            {
+                float liftProgress = Mathf.SmoothStep(0f, 1f, progress / liftPhaseEnd);
+                newPos = Vector3.Lerp(climbStartPos, climbLiftPos, liftProgress);
+            }
+            else
+            {
+                float forwardProgress = Mathf.SmoothStep(
+                    0f,
+                    1f,
+                    (progress - liftPhaseEnd) / (1f - liftPhaseEnd)
+                );
+                newPos = Vector3.Lerp(climbLiftPos, targetPos, forwardProgress);
+            }
+
+            // Durante el mantle el CharacterController no debe resolver la
+            // esquina como una pared; la trayectoria ya termina encima del suelo.
+            stateMachine.transform.position = newPos;
 
             if (progress >= 1f)
             {
-                // Llegamos arriba, salir al estado normal
                 stateMachine.SwitchState(typeof(PlayerIdleState));
                 return;
             }
-
-            // Lerp suave desde la posición de agarre hasta arriba del borde
-            Vector3 targetPos = stateMachine.LedgeClimbTarget;
-            Vector3 newPos = Vector3.Lerp(climbStartPos, targetPos, progress);
-            Vector3 displacement = newPos - stateMachine.transform.position;
-            stateMachine.CC.Move(displacement);
             return;
         }
 
@@ -75,22 +102,56 @@ public class PlayerLedgeGrabState : PlayerBaseState
             stateMachine.ClearJumpInputFrame();
 
             Vector2 input = stateMachine.GetInput();
-            if (input.sqrMagnitude > 0.1f)
+            Vector3 jumpDir = input.sqrMagnitude > 0.1f
+                ? stateMachine.GetWorldMovementDirection(input)
+                : Vector3.zero;
+            jumpDir.y = 0f;
+            if (jumpDir.sqrMagnitude > 0.01f)
+                jumpDir.Normalize();
+
+            // La intención de climb se lee directamente del stick/WASD. Usar
+            // la dirección mundial de cámara hacía que W pudiera convertirse
+            // en salto lateral al mirar un poco de lado y chocara con el borde.
+            bool hasDirectionalInput = input.sqrMagnitude > 0.1f;
+            bool wantsToClimb = !hasDirectionalInput || input.y > 0.1f;
+
+            if (!wantsToClimb)
             {
                 // Salto direccional: impulso en la dirección del input + arriba
-                Vector3 jumpDir = stateMachine.GetWorldMovementDirection(input);
-                Vector3 horizontalForce = jumpDir * stateMachine.LedgeJumpForce;
-                stateMachine.CurrentHorizontalVelocity = horizontalForce;
-                stateMachine.ExecuteJump();
+                if (entryHorizontalVelocity.magnitude > 0.1f
+                    && Vector3.Dot(entryHorizontalVelocity.normalized, jumpDir) > 0f)
+                {
+                    jumpDir = Vector3.Slerp(
+                        entryHorizontalVelocity.normalized,
+                        jumpDir,
+                        0.6f
+                    ).normalized;
+                }
+
+                float exitSpeed = stateMachine.ResolveActionSpeed(
+                    entryHorizontalVelocity.magnitude,
+                    stateMachine.LedgeJumpHorizontalForce,
+                    0.5f,
+                    0f
+                );
+                stateMachine.CurrentHorizontalVelocity = jumpDir * exitSpeed;
+                stateMachine.ExecuteJump(stateMachine.LedgeJumpForce);
                 stateMachine.SwitchState(typeof(PlayerIdleState));
                 return;
             }
             else
             {
-                // Sin dirección: subir al borde (climb)
+                // Espacio, o W + Espacio: subir al borde.
                 isClimbing = true;
                 climbTimer = 0f;
                 climbStartPos = stateMachine.transform.position;
+                climbLiftPos = new Vector3(
+                    climbStartPos.x,
+                    stateMachine.LedgeClimbTarget.y,
+                    climbStartPos.z
+                );
+                stateMachine.CC.enabled = false;
+                controllerDisabledForClimb = true;
                 return;
             }
         }
@@ -111,6 +172,13 @@ public class PlayerLedgeGrabState : PlayerBaseState
 
     public override void Exit()
     {
+        if (controllerDisabledForClimb)
+        {
+            Physics.SyncTransforms();
+            stateMachine.CC.enabled = true;
+            controllerDisabledForClimb = false;
+        }
+
         // Desuscribirse de inputs
         stateMachine.UnsubscribeInputJump();
         stateMachine.UnsubscribeInputCrouch();

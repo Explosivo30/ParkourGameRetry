@@ -50,6 +50,10 @@ public class PlayerIdleState : PlayerBaseState
 
         // Leer el estado de crouch directamente del InputReader para fiabilidad
         bool crouchHeld = stateMachine.Controls != null && stateMachine.Controls.CrouchHeld;
+        bool crouchPressed = stateMachine.Controls != null
+            && stateMachine.Controls.CrouchPressedThisFrame;
+        bool sprintPressed = stateMachine.Controls != null
+            && stateMachine.Controls.SprintPressedThisFrame;
 
         // ---- DETECCIÓN DE ATERRIZAJE ----
         // Comprobar si acabamos de aterrizar de una caída alta
@@ -58,7 +62,7 @@ public class PlayerIdleState : PlayerBaseState
             if (_lastVerticalSpeed > stateMachine.RollMinFallSpeed)
             {
                 // Caída alta detectada
-                if (crouchHeld)
+                if (stateMachine.LandingRollInputBuffered)
                 {
                     // ---- LANDING ROLL ----
                     // El jugador pulsó crouch al aterrizar → recompensa con roll
@@ -114,8 +118,9 @@ public class PlayerIdleState : PlayerBaseState
         }
 
         // ---- PRIORIDAD 4: SLIDE ----
-        // En suelo, crouch pulsado, y con suficiente velocidad
-        if (stateMachine.Grounded && crouchHeld)
+        // Solo el flanco de pulsación inicia el slide. Mantener crouch no
+        // puede crear una cadena infinita de reentradas.
+        if (stateMachine.Grounded && crouchPressed)
         {
             float currentSpeed = stateMachine.CurrentHorizontalVelocity.magnitude;
             if (currentSpeed >= stateMachine.SlideMinSpeed)
@@ -128,17 +133,13 @@ public class PlayerIdleState : PlayerBaseState
         }
 
         // ---- PRIORIDAD 5: DASH ----
-        // Sprint pulsado y cooldown cumplido (funciona en suelo y aire)
-        if (!crouchHeld && stateMachine.Controls != null && stateMachine.Controls.SprintHeld)
+        // Solo una pulsación nueva puede iniciar dash.
+        if (!crouchHeld && sprintPressed && stateMachine.CanDash())
         {
-            float timeSinceLastDash = Time.time - stateMachine.LastDashTime;
-            if (timeSinceLastDash >= stateMachine.DashCooldown)
-            {
-                stateMachine.SwitchState(typeof(PlayerDashState));
-                _wasGroundedLastFrame = stateMachine.Grounded;
-                _lastVerticalSpeed = stateMachine.GetVerticalSpeed();
-                return;
-            }
+            stateMachine.SwitchState(typeof(PlayerDashState));
+            _wasGroundedLastFrame = stateMachine.Grounded;
+            _lastVerticalSpeed = stateMachine.GetVerticalSpeed();
+            return;
         }
 
         // ---- PRIORIDAD 6: SALTO NORMAL ----

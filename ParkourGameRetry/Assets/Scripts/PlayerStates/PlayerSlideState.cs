@@ -24,7 +24,7 @@ public class PlayerSlideState : PlayerBaseState
     public override void Enter()
     {
         // Registrar acción de parkour para el sistema de momentum
-        stateMachine.RegisterParkourAction();
+        stateMachine.RegisterParkourAction(ParkourActionType.Slide);
 
         // Suscribirse a inputs
         stateMachine.SubscribeInputJump();
@@ -38,16 +38,21 @@ public class PlayerSlideState : PlayerBaseState
         if (slideDirection.sqrMagnitude < 0.01f)
             slideDirection = stateMachine.transform.forward;
 
-        // La velocidad del slide es la mayor entre la velocidad actual y SlideSpeed
-        currentSlideSpeed = Mathf.Max(stateMachine.CurrentHorizontalVelocity.magnitude, stateMachine.SlideSpeed);
-
-        // Aplicar multiplicador de momentum si hay combo activo
-        currentSlideSpeed *= stateMachine.MomentumMultiplier;
+        currentSlideSpeed = stateMachine.ResolveActionSpeed(
+            stateMachine.CurrentHorizontalVelocity.magnitude,
+            stateMachine.SlideSpeed,
+            stateMachine.SlideMomentumRetention,
+            stateMachine.SlideSpeedReward
+        );
 
         slideTimer = 0f;
 
-        // Inclinar la cámara ligeramente hacia abajo (el jugador se agacha)
-        stateMachine.SetCameraTilt(-5f);
+        // Bajar el punto de vista junto con el collider para que el slide
+        // se lea físicamente y no como una carrera inclinada.
+        stateMachine.SetCameraHeightOffset(
+            -stateMachine.SlideCameraDropAmount,
+            stateMachine.SlideCameraDropSpeed
+        );
     }
 
     public override void Tick(float deltaTime)
@@ -57,6 +62,11 @@ public class PlayerSlideState : PlayerBaseState
 
         // ---- Detección de suelo ----
         stateMachine.GroundDetection();
+        if (!stateMachine.Grounded)
+        {
+            stateMachine.SwitchState(typeof(PlayerIdleState));
+            return;
+        }
 
         // ---- Gravedad ----
         stateMachine.ApplyGravity();
@@ -66,6 +76,19 @@ public class PlayerSlideState : PlayerBaseState
 
         // ---- FRICCIÓN DEL SLIDE ----
         currentSlideSpeed -= stateMachine.SlideFriction * deltaTime;
+
+        // Dirección asistida suave: permite corregir el slide sin girarlo
+        // instantáneamente ni destruir la inercia.
+        Vector3 desiredDirection = stateMachine.GetWorldMovementDirection(stateMachine.GetInput());
+        if (desiredDirection.sqrMagnitude > 0.05f)
+        {
+            desiredDirection.y = 0f;
+            slideDirection = Vector3.Slerp(
+                slideDirection,
+                desiredDirection.normalized,
+                stateMachine.SlideSteering * deltaTime
+            ).normalized;
+        }
 
         // ---- BOOST EN PENDIENTES ----
         // Si el suelo está inclinado (dot < 0.95), ganar velocidad cuesta abajo
@@ -90,22 +113,24 @@ public class PlayerSlideState : PlayerBaseState
 
         // ---- CONDICIONES DE SALIDA ----
 
-        // 1. Slide → Vault: si hay un obstáculo vaultable, encadenar automáticamente
-        if (stateMachine.CanVault())
-        {
-            stateMachine.SwitchState(typeof(PlayerVaultState));
-            return;
-        }
-
-        // 2. Salto desde el slide
+        // 1. Salto o vault desde slide. Nunca se hace vault automático
+        // por tocar un obstáculo sin intención del jugador.
         if (stateMachine.JumpPressed)
         {
-            stateMachine.ClearJumpInputFrame();
-            stateMachine.SwitchState(typeof(PlayerIdleState));
+            if (stateMachine.CanVault())
+            {
+                stateMachine.JumpBufferCounter = 0f;
+                stateMachine.SwitchState(typeof(PlayerVaultState));
+            }
+            else
+            {
+                stateMachine.ExecuteJump();
+                stateMachine.SwitchState(typeof(PlayerIdleState));
+            }
             return;
         }
 
-        // 3. Soltar crouch (leer directamente del InputReader)
+        // 2. Soltar crouch (leer directamente del InputReader)
         bool crouchStillHeld = stateMachine.Controls != null && stateMachine.Controls.CrouchHeld;
         if (!crouchStillHeld)
         {
@@ -113,14 +138,14 @@ public class PlayerSlideState : PlayerBaseState
             return;
         }
 
-        // 4. Timer agotado
+        // 3. Timer agotado
         if (slideTimer >= stateMachine.SlideDuration)
         {
             stateMachine.SwitchState(typeof(PlayerIdleState));
             return;
         }
 
-        // 5. Velocidad demasiado baja
+        // 4. Velocidad demasiado baja
         if (currentSlideSpeed < 2f)
         {
             stateMachine.SwitchState(typeof(PlayerIdleState));
@@ -137,8 +162,8 @@ public class PlayerSlideState : PlayerBaseState
         // Restaurar collider a su tamaño original
         stateMachine.RestoreCollider();
 
-        // Resetear tilt de cámara (vuelve suavemente a 0 por el lerp)
-        stateMachine.SetCameraTilt(0f);
+        // Recuperar la altura normal de la cámara de forma suave.
+        stateMachine.SetCameraHeightOffset(0f, stateMachine.SlideCameraDropSpeed);
 
         // Desuscribirse de inputs
         stateMachine.UnsubscribeInputJump();

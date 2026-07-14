@@ -66,6 +66,7 @@ public class PlayerCameraEffects : MonoBehaviour
     private bool _wasGroundedLastFrame;
     private float _lastVerticalSpeed;       // Para detectar aterrizajes
     private float _currentLean;             // Sprint lean actual
+    private float _lastAppliedLean;
     private float _lastYaw;                 // Para calcular velocidad angular
 
     private void Start()
@@ -200,10 +201,12 @@ public class PlayerCameraEffects : MonoBehaviour
         
         transform.localPosition = offset;
         
-        // Sprint lean (rotación Z, se suma al tilt de wall-run que gestiona PlayerStateMachine)
+        // Aplicar solo el delta del lean. Sumar el valor completo cada frame
+        // acumulaba rotación indefinidamente.
         Vector3 euler = transform.localEulerAngles;
-        euler.z += _currentLean;
+        euler.z += _currentLean - _lastAppliedLean;
         transform.localEulerAngles = euler;
+        _lastAppliedLean = _currentLean;
     }
 
     // ==================== API PÚBLICA ====================

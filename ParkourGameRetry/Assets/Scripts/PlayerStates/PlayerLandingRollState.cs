@@ -6,8 +6,8 @@ using UnityEngine;
 /// ENTRADA: Se activa cuando el jugador aterriza de una caída alta (> RollMinFallSpeed)
 ///          y pulsa crouch justo al tocar el suelo.
 ///
-/// DURANTE: El jugador rueda hacia adelante. La velocidad se MULTIPLICA por RollSpeedBoost
-///          (recompensa por hacer el roll). La cámara rota en Z simulando la voltereta.
+/// DURANTE: El jugador rueda hacia adelante conservando el momentum ganado.
+///          La cámara completa una vuelta frontal de 360 grados.
 ///
 /// SALIDA:  Cuando el timer expira. El jugador sale con más velocidad de la que tendría
 ///          si hubiera aterrizado sin roll (castigo por no rodar = HardLandingPenalty).
@@ -16,16 +16,14 @@ public class PlayerLandingRollState : PlayerBaseState
 {
     private float rollTimer;
     private Vector3 rollDirection;
+    private float rollSpeed;
 
     public PlayerLandingRollState(PlayerStateMachine stateMachine) : base(stateMachine) { }
 
     public override void Enter()
     {
         // Registrar acción de parkour para el sistema de momentum
-        stateMachine.RegisterParkourAction();
-
-        // Suscribirse al input de salto (por si quiere saltar durante el roll)
-        stateMachine.SubscribeInputJump();
+        stateMachine.RegisterParkourAction(ParkourActionType.LandingRoll);
 
         rollTimer = 0f;
 
@@ -34,11 +32,16 @@ public class PlayerLandingRollState : PlayerBaseState
         if (rollDirection.sqrMagnitude < 0.01f)
             rollDirection = stateMachine.transform.forward;
 
-        // Multiplicar la velocidad por el boost de roll (recompensa)
-        stateMachine.CurrentHorizontalVelocity *= stateMachine.RollSpeedBoost;
+        rollSpeed = stateMachine.ResolveActionSpeed(
+            stateMachine.CurrentHorizontalVelocity.magnitude,
+            stateMachine.RollMinimumSpeed,
+            1f,
+            stateMachine.RollSpeedBoost
+        );
+        stateMachine.CurrentHorizontalVelocity = rollDirection * rollSpeed;
 
-        // Iniciar la rotación de cámara simulando la voltereta
-        stateMachine.SetCameraTilt(stateMachine.RollCameraAngle);
+        stateMachine.SetCameraTilt(0f);
+        stateMachine.SetCameraRollPitch(0f);
     }
 
     public override void Tick(float deltaTime)
@@ -54,24 +57,21 @@ public class PlayerLandingRollState : PlayerBaseState
 
         // ---- Timer ----
         rollTimer += deltaTime;
-        float progress = rollTimer / stateMachine.RollDuration;
+        float progress = Mathf.Clamp01(rollTimer / stateMachine.RollDuration);
 
-        // ---- Animación de cámara: el tilt vuelve a 0 gradualmente ----
-        float tiltProgress = 1f - progress;
-        stateMachine.SetCameraTilt(stateMachine.RollCameraAngle * tiltProgress);
+        // Vuelta frontal completa. SmoothStep evita un comienzo o final seco,
+        // y la curva senoidal baja la cabeza al pasar cerca del suelo.
+        float easedProgress = Mathf.SmoothStep(0f, 1f, progress);
+        stateMachine.SetCameraRollPitch(stateMachine.RollCameraAngle * easedProgress);
+        stateMachine.SetCameraHeightOffset(
+            -stateMachine.RollCameraDropAmount * Mathf.Sin(progress * Mathf.PI),
+            20f
+        );
 
         // ---- Movimiento en la dirección del roll ----
-        Vector3 moveVelocity = rollDirection * stateMachine.CurrentHorizontalVelocity.magnitude;
+        Vector3 moveVelocity = rollDirection * rollSpeed;
+        stateMachine.CurrentHorizontalVelocity = moveVelocity;
         stateMachine.CC.Move(moveVelocity * deltaTime);
-
-        // ---- Salto durante el roll (cancelar roll y saltar) ----
-        if (stateMachine.JumpPressed)
-        {
-            stateMachine.ClearJumpInputFrame();
-            stateMachine.ExecuteJump();
-            stateMachine.SwitchState(typeof(PlayerIdleState));
-            return;
-        }
 
         // ---- Fin del roll ----
         if (progress >= 1f)
@@ -87,10 +87,9 @@ public class PlayerLandingRollState : PlayerBaseState
 
     public override void Exit()
     {
-        // Resetear tilt de cámara
+        // 360 y 0 representan la misma orientación, así que no hay salto visual.
+        stateMachine.SetCameraRollPitch(0f);
         stateMachine.SetCameraTilt(0f);
-
-        // Desuscribirse del input de salto
-        stateMachine.UnsubscribeInputJump();
+        stateMachine.SetCameraHeightOffset(0f, 12f);
     }
 }

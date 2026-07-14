@@ -14,19 +14,33 @@ using UnityEngine;
 public class PlayerGrappleState : PlayerBaseState
 {
     private Vector3 travelDirection;
+    private float entrySpeed;
+    private float travelSpeed;
+    private float previousDistance;
+    private float blockedTimer;
+    private bool exitedByJump;
+    private bool reachedAnchor;
 
     public PlayerGrappleState(PlayerStateMachine stateMachine) : base(stateMachine) { }
 
     public override void Enter()
     {
         // Registrar acción de parkour para el sistema de momentum
-        stateMachine.RegisterParkourAction();
+        stateMachine.RegisterParkourAction(ParkourActionType.Grapple);
 
         // Suscribirse al input de salto para poder cancelar el grapple
         stateMachine.SubscribeInputJump();
 
         // Calcular dirección de viaje hacia el punto de enganche
         travelDirection = (stateMachine.GrappleTarget - stateMachine.transform.position).normalized;
+        entrySpeed = stateMachine.CurrentHorizontalVelocity.magnitude;
+        travelSpeed = Mathf.Max(entrySpeed, stateMachine.GrappleSpeed);
+        previousDistance = Vector3.Distance(stateMachine.transform.position, stateMachine.GrappleTarget);
+        blockedTimer = 0f;
+        exitedByJump = false;
+        reachedAnchor = false;
+        stateMachine.ResetVerticalVelocity();
+        stateMachine.SetGrappleActive(true);
     }
 
     public override void Tick(float deltaTime)
@@ -38,18 +52,41 @@ public class PlayerGrappleState : PlayerBaseState
         travelDirection = (stateMachine.GrappleTarget - stateMachine.transform.position).normalized;
 
         // ---- Movimiento hacia el punto de enganche ----
-        Vector3 moveVelocity = travelDirection * stateMachine.GrappleSpeed;
+        Vector3 moveVelocity = travelDirection * travelSpeed;
+        stateMachine.CurrentHorizontalVelocity = Vector3.ProjectOnPlane(moveVelocity, Vector3.up);
         stateMachine.CC.Move(moveVelocity * deltaTime);
 
         // ---- CONDICIÓN DE SALIDA 1: Llegamos al destino ----
         float distanceToTarget = Vector3.Distance(stateMachine.transform.position, stateMachine.GrappleTarget);
-        if (distanceToTarget < 1.5f)
+        if (distanceToTarget < stateMachine.GrappleStopDistance)
         {
-            // Inyectar velocidad de salida con boost para conservar el momentum
-            Vector3 exitVelocity = travelDirection * stateMachine.GrappleSpeed * stateMachine.GrappleExitBoost;
-            exitVelocity.y = 0f; // Solo inercia horizontal
-            stateMachine.CurrentHorizontalVelocity = exitVelocity;
+            Vector3 exitDirection = Vector3.ProjectOnPlane(travelDirection, Vector3.up).normalized;
+            if (exitDirection.sqrMagnitude < 0.01f)
+                exitDirection = stateMachine.transform.forward;
+            float exitSpeed = stateMachine.ResolveActionSpeed(
+                travelSpeed,
+                stateMachine.GrappleSpeed,
+                1f,
+                stateMachine.GrappleSpeed * (stateMachine.GrappleExitBoost - 1f)
+            );
+            stateMachine.CurrentHorizontalVelocity = exitDirection * exitSpeed;
+            stateMachine.SetVerticalVelocity(Mathf.Clamp(travelDirection.y * travelSpeed * 0.65f, 0f, 8f));
 
+            reachedAnchor = true;
+            stateMachine.SwitchState(typeof(PlayerIdleState));
+            return;
+        }
+
+        // Si una pared bloquea el CharacterController, soltar el cable en vez
+        // de dejar al jugador vibrando indefinidamente contra la geometría.
+        if (distanceToTarget >= previousDistance - 0.01f)
+            blockedTimer += deltaTime;
+        else
+            blockedTimer = 0f;
+        previousDistance = distanceToTarget;
+
+        if (blockedTimer > 0.25f)
+        {
             stateMachine.SwitchState(typeof(PlayerIdleState));
             return;
         }
@@ -60,11 +97,19 @@ public class PlayerGrappleState : PlayerBaseState
             stateMachine.ClearJumpInputFrame();
 
             // Conservar la velocidad actual como inercia + un salto vertical
-            Vector3 exitVelocity = travelDirection * stateMachine.GrappleSpeed;
-            exitVelocity.y = 0f;
-            stateMachine.CurrentHorizontalVelocity = exitVelocity;
+            Vector3 exitDirection = Vector3.ProjectOnPlane(travelDirection, Vector3.up).normalized;
+            if (exitDirection.sqrMagnitude < 0.01f)
+                exitDirection = stateMachine.transform.forward;
+            float exitSpeed = stateMachine.ResolveActionSpeed(
+                travelSpeed,
+                stateMachine.GrappleSpeed,
+                1f,
+                0f
+            );
+            stateMachine.CurrentHorizontalVelocity = exitDirection * exitSpeed;
             stateMachine.ExecuteJump();
 
+            exitedByJump = true;
             stateMachine.SwitchState(typeof(PlayerIdleState));
             return;
         }
@@ -76,6 +121,11 @@ public class PlayerGrappleState : PlayerBaseState
 
     public override void Exit()
     {
+        if (!exitedByJump && !reachedAnchor)
+            stateMachine.SetVerticalVelocity(travelDirection.y * travelSpeed * 0.5f);
+
+        stateMachine.SetGrappleActive(false);
+
         // Desuscribirse del input de salto
         stateMachine.UnsubscribeInputJump();
     }

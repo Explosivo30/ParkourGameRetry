@@ -10,6 +10,7 @@ public class ParkourAudioManager : MonoBehaviour
 {
     [Header("Referencias")]
     [SerializeField] PlayerStateMachine playerSM;
+    [SerializeField] bool createProceduralFallbacks = true;
 
     // =====================================================================
     //  VIENTO — Sonido que sube con la velocidad
@@ -61,6 +62,28 @@ public class ParkourAudioManager : MonoBehaviour
     private float _targetWindPitch;
     private bool _wasGroundedLastFrame;
     private int _lastMomentumCount;
+
+    private void Awake()
+    {
+        if (playerSM == null)
+            playerSM = GetComponent<PlayerStateMachine>();
+
+        if (!createProceduralFallbacks) return;
+
+        if (windSource == null)
+            windSource = CreateAudioSource(0f);
+        if (comboSource == null)
+            comboSource = CreateAudioSource(0.55f);
+        if (windLoop == null)
+            windLoop = CreateProceduralWindLoop();
+        if (comboChainSound == null)
+            comboChainSound = CreateProceduralComboTone();
+    }
+
+    public void Bind(PlayerStateMachine stateMachine)
+    {
+        playerSM = stateMachine;
+    }
 
     private void Start()
     {
@@ -172,5 +195,52 @@ public class ParkourAudioManager : MonoBehaviour
         int index = Random.Range(0, clips.Length);
         source.pitch = Random.Range(0.9f, 1.1f); // Variación sutil de pitch para que no suene repetitivo
         source.PlayOneShot(clips[index]);
+    }
+
+    private AudioSource CreateAudioSource(float initialVolume)
+    {
+        AudioSource source = gameObject.AddComponent<AudioSource>();
+        source.playOnAwake = false;
+        source.spatialBlend = 0f;
+        source.volume = initialVolume;
+        return source;
+    }
+
+    private static AudioClip CreateProceduralWindLoop()
+    {
+        const int sampleRate = 44100;
+        const int sampleCount = sampleRate * 2;
+        float[] samples = new float[sampleCount];
+        System.Random random = new System.Random(7319);
+        float filteredNoise = 0f;
+
+        for (int i = 0; i < samples.Length; i++)
+        {
+            float whiteNoise = (float)(random.NextDouble() * 2.0 - 1.0);
+            filteredNoise = Mathf.Lerp(filteredNoise, whiteNoise, 0.035f);
+            samples[i] = filteredNoise * 0.28f;
+        }
+
+        AudioClip clip = AudioClip.Create("Procedural Parkour Wind", sampleCount, 1, sampleRate, false);
+        clip.SetData(samples, 0);
+        return clip;
+    }
+
+    private static AudioClip CreateProceduralComboTone()
+    {
+        const int sampleRate = 44100;
+        int sampleCount = Mathf.RoundToInt(sampleRate * 0.12f);
+        float[] samples = new float[sampleCount];
+
+        for (int i = 0; i < samples.Length; i++)
+        {
+            float time = i / (float)sampleRate;
+            float envelope = 1f - i / (float)samples.Length;
+            samples[i] = Mathf.Sin(2f * Mathf.PI * 620f * time) * envelope * envelope * 0.22f;
+        }
+
+        AudioClip clip = AudioClip.Create("Procedural Flow Chain", sampleCount, 1, sampleRate, false);
+        clip.SetData(samples, 0);
+        return clip;
     }
 }

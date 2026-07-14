@@ -1459,8 +1459,8 @@ Transform:
   m_GameObject: {fileID: 40728595}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -29.52, y: -8.89, z: -4.13}
-  m_LocalScale: {x: 3.5616, y: 1, z: 4.1401}
+  m_LocalPosition: {x: -29.52, y: -9.4, z: -4.13}
+  m_LocalScale: {x: 3.5616, y: 0.30215165, z: 4.1401}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
@@ -6733,7 +6733,7 @@ Transform:
   m_GameObject: {fileID: 330585543}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0.3029605, z: 0, w: 0.95300317}
-  m_LocalPosition: {x: -28.839275, y: -1.7196362, z: -14.345082}
+  m_LocalPosition: {x: -28.839275, y: 9.5, z: -14.345082}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -16820,13 +16820,17 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
+    - target: {fileID: 3100816890958244657, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
+      propertyPath: m_IsActive
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 7135611269401929256, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: m_LocalPosition.x
       value: -28.839275
       objectReference: {fileID: 0}
     - target: {fileID: 7135611269401929256, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: m_LocalPosition.y
-      value: -2.7196362
+      value: 8.5
       objectReference: {fileID: 0}
     - target: {fileID: 7135611269401929256, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: m_LocalPosition.z
@@ -16865,6 +16869,10 @@ PrefabInstance:
       value: '***********Player'
       objectReference: {fileID: 0}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
+      propertyPath: _maxFov
+      value: 120
+      objectReference: {fileID: 0}
+    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _jumpForce
       value: 10
       objectReference: {fileID: 0}
@@ -16878,7 +16886,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _acceleration
-      value: 8
+      value: 14
       objectReference: {fileID: 0}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _deceleration
@@ -16889,12 +16897,24 @@ PrefabInstance:
       value: 21
       objectReference: {fileID: 0}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
+      propertyPath: _ledgeJumpForce
+      value: 3.48
+      objectReference: {fileID: 0}
+    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _targetVelocity
       value: 12
       objectReference: {fileID: 0}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _vaultArcHeight
-      value: 2.18
+      value: 0.85
+      objectReference: {fileID: 0}
+    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
+      propertyPath: _vaultMaxHeight
+      value: 2.32
+      objectReference: {fileID: 0}
+    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
+      propertyPath: _vaultMinHeight
+      value: 0.36
       objectReference: {fileID: 0}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _airAcceleration
@@ -16902,19 +16922,43 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _airDeceleration
-      value: 1
+      value: 0.1
       objectReference: {fileID: 0}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _cameraTiltTarget
       value: 
       objectReference: {fileID: 1402086163}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
+      propertyPath: _rollMinFallSpeed
+      value: 3
+      objectReference: {fileID: 0}
+    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _vaultMask.m_Bits
       value: 4294967295
       objectReference: {fileID: 0}
     - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
+      propertyPath: _ledgeGrabMaxHeight
+      value: 3.49
+      objectReference: {fileID: 0}
+    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
+      propertyPath: _ledgeGrabMinHeight
+      value: 0.35
+      objectReference: {fileID: 0}
+    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
       propertyPath: _wallRunMask.m_Bits
       value: 64
+      objectReference: {fileID: 0}
+    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
+      propertyPath: _slideMomentumRetention
+      value: 0.947
+      objectReference: {fileID: 0}
+    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
+      propertyPath: _ledgeClimbForwardOffset
+      value: 0.74
+      objectReference: {fileID: 0}
+    - target: {fileID: 8714991725687023894, guid: 33a9e2acf122a9f439cebf07555492bc, type: 3}
+      propertyPath: _ledgeJumpHorizontalForce
+      value: 21.5
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

@@ -14,16 +14,15 @@ public class PlayerDashState : PlayerBaseState
 {
     private float dashTimer;
     private Vector3 dashDirection;
+    private float dashSpeed;
 
     public PlayerDashState(PlayerStateMachine stateMachine) : base(stateMachine) { }
 
     public override void Enter()
     {
         // Registrar acción de parkour para el sistema de momentum
-        stateMachine.RegisterParkourAction();
-
-        // Registrar tiempo del dash para el cooldown
-        stateMachine.LastDashTime = Time.time;
+        stateMachine.RegisterParkourAction(ParkourActionType.Dash);
+        stateMachine.NotifyDashStarted();
 
         dashTimer = 0f;
 
@@ -39,8 +38,18 @@ public class PlayerDashState : PlayerBaseState
         }
         dashDirection = new Vector3(dashDirection.x, 0f, dashDirection.z).normalized;
 
-        // Inyectar la velocidad del dash directamente en la inercia horizontal
-        stateMachine.CurrentHorizontalVelocity = dashDirection * stateMachine.DashForce;
+        Vector3 incomingVelocity = stateMachine.CurrentHorizontalVelocity;
+        float incomingSpeed = incomingVelocity.magnitude;
+        if (incomingSpeed > 0.1f && Vector3.Dot(incomingVelocity.normalized, dashDirection) > 0.15f)
+            dashDirection = Vector3.Slerp(incomingVelocity.normalized, dashDirection, 0.35f).normalized;
+
+        dashSpeed = stateMachine.ResolveActionSpeed(
+            incomingSpeed,
+            stateMachine.DashForce,
+            1f,
+            stateMachine.DashSpeedReward
+        );
+        stateMachine.CurrentHorizontalVelocity = dashDirection * dashSpeed;
     }
 
     public override void Tick(float deltaTime)
@@ -51,11 +60,14 @@ public class PlayerDashState : PlayerBaseState
         // ---- Timer ----
         dashTimer += deltaTime;
 
+        stateMachine.GroundDetection();
+
         // ---- Gravedad (se sigue aplicando para que el dash no flote) ----
         stateMachine.ApplyGravity();
 
         // ---- Movimiento del dash ----
-        Vector3 dashVelocity = dashDirection * stateMachine.DashForce;
+        Vector3 dashVelocity = dashDirection * dashSpeed;
+        stateMachine.CurrentHorizontalVelocity = dashVelocity;
         stateMachine.CC.Move(dashVelocity * deltaTime);
 
         // ---- Salida cuando se acaba la duración ----

@@ -6,6 +6,8 @@ public class PlayerVaultState : PlayerBaseState
     private Vector3 targetPos;
     private float vaultTimer;
     private CharacterController cc;
+    private Vector3 exitDirection;
+    private float entrySpeed;
 
     public PlayerVaultState(PlayerStateMachine stateMachine) : base(stateMachine)
     {
@@ -13,23 +15,29 @@ public class PlayerVaultState : PlayerBaseState
 
     public override void Enter()
     {
+        stateMachine.RegisterParkourAction(ParkourActionType.Vault);
+
         startPos = stateMachine.transform.position;
         targetPos = stateMachine.VaultTargetPosition;
         vaultTimer = 0f;
         cc = stateMachine.GetComponent<CharacterController>();
+        entrySpeed = stateMachine.CurrentHorizontalVelocity.magnitude;
+        exitDirection = entrySpeed > 0.1f
+            ? stateMachine.CurrentHorizontalVelocity.normalized
+            : stateMachine.transform.forward;
+        exitDirection.y = 0f;
+        exitDirection.Normalize();
+
+        stateMachine.ResetVerticalVelocity();
         stateMachine.ClearJumpInputFrame();
     }
 
     public override void Tick(float deltaTime)
     {
-        vaultTimer += deltaTime;
-        float progress = vaultTimer / stateMachine.VaultDuration;
+        stateMachine.PlayerLook();
 
-        if (progress >= 1f)
-        {
-            stateMachine.SwitchState(typeof(PlayerIdleState));
-            return;
-        }
+        vaultTimer += deltaTime;
+        float progress = Mathf.Clamp01(vaultTimer / stateMachine.VaultDuration);
 
         // Apply horizontal interpolation
         Vector3 horizontalPos = Vector3.Lerp(
@@ -48,6 +56,12 @@ public class PlayerVaultState : PlayerBaseState
         // Move the CharacterController to the new position
         Vector3 displacement = newPos - stateMachine.transform.position;
         cc.Move(displacement);
+
+        if (progress >= 1f)
+        {
+            stateMachine.SwitchState(typeof(PlayerIdleState));
+            return;
+        }
     }
 
     public override void FixedTick(float fixedDeltaTime)
@@ -56,6 +70,14 @@ public class PlayerVaultState : PlayerBaseState
 
     public override void Exit()
     {
+        float exitSpeed = stateMachine.ResolveActionSpeed(
+            entrySpeed,
+            stateMachine.VaultExitSpeed,
+            stateMachine.VaultMomentumRetention,
+            stateMachine.VaultSpeedReward
+        );
+        stateMachine.CurrentHorizontalVelocity = exitDirection * exitSpeed;
+        stateMachine.SetVerticalVelocity(stateMachine.VaultExitUpForce);
         stateMachine.ResetVaultPhysics();
     }
 }

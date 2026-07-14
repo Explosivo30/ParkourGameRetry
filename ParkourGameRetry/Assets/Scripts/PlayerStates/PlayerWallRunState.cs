@@ -20,7 +20,8 @@ public class PlayerWallRunState : PlayerBaseState
     private Vector3 wallNormal;           // Normal de la pared (apunta hacia fuera)
     private Vector3 wallRunDirection;     // Dirección de movimiento a lo largo de la pared
     private float verticalVelocity;       // Velocidad vertical (gravedad reducida)
-    private bool exitedByJump;            // Flag para saber si se salió pulsando salto
+    private float currentWallRunSpeed;
+    private bool exitedByJump;
 
     public PlayerWallRunState(PlayerStateMachine stateMachine) : base(stateMachine)
     {
@@ -31,10 +32,13 @@ public class PlayerWallRunState : PlayerBaseState
     // =====================================================================
     public override void Enter()
     {
+        stateMachine.RegisterParkourAction(ParkourActionType.WallRun);
+
         // Resetear temporizador y velocidad vertical al entrar
         wallRunTimer = 0f;
         verticalVelocity = 0f;
         exitedByJump = false;
+        stateMachine.ResetVerticalVelocity();
 
         // Suscribirse al input de salto para poder saltar desde la pared
         stateMachine.SubscribeInputJump();
@@ -57,12 +61,19 @@ public class PlayerWallRunState : PlayerBaseState
         // es decir, la dirección "adelante" a lo largo de la pared.
         wallRunDirection = Vector3.Cross(wallNormal, Vector3.up).normalized;
 
-        // Asegurar que la dirección de wall-run va en el mismo sentido que el jugador.
-        // Si el jugador corre en sentido opuesto, invertimos la dirección.
-        if (Vector3.Dot(wallRunDirection, stateMachine.transform.forward) < 0f)
+        Vector3 incomingVelocity = stateMachine.CurrentHorizontalVelocity;
+        if (Vector3.Dot(wallRunDirection, incomingVelocity) < 0f)
         {
             wallRunDirection = -wallRunDirection;
         }
+
+        currentWallRunSpeed = stateMachine.ResolveActionSpeed(
+            incomingVelocity.magnitude,
+            stateMachine.WallRunSpeed,
+            stateMachine.WallRunMomentumRetention,
+            stateMachine.WallRunSpeedReward
+        );
+        stateMachine.CurrentHorizontalVelocity = wallRunDirection * currentWallRunSpeed;
 
         // ---- Activar tilt de cámara ----
         // Pared a la derecha -> tilt positivo
@@ -80,6 +91,12 @@ public class PlayerWallRunState : PlayerBaseState
     {
         // ---- Mantener el control de cámara (yaw) ----
         stateMachine.PlayerLook();
+        stateMachine.GroundDetection();
+        if (stateMachine.Grounded)
+        {
+            stateMachine.SwitchState(typeof(PlayerIdleState));
+            return;
+        }
 
         // ---- Incrementar temporizador ----
         wallRunTimer += deltaTime;
@@ -125,7 +142,7 @@ public class PlayerWallRunState : PlayerBaseState
 
         // Recalcular dirección de wall-run por si la pared curva
         wallRunDirection = Vector3.Cross(wallNormal, Vector3.up).normalized;
-        if (Vector3.Dot(wallRunDirection, stateMachine.transform.forward) < 0f)
+        if (Vector3.Dot(wallRunDirection, stateMachine.CurrentHorizontalVelocity) < 0f)
         {
             wallRunDirection = -wallRunDirection;
         }
@@ -142,17 +159,20 @@ public class PlayerWallRunState : PlayerBaseState
 
             // 2. Aplicar el impulso de salida directamente aqui, antes del SwitchState
             //    Asi IdleState recibe la velocidad ya seteada y no la pisa.
-            stateMachine.ApplyWallRunExitImpulse(wallNormal);
+            stateMachine.ApplyWallRunExitImpulse(
+                wallNormal,
+                wallRunDirection,
+                currentWallRunSpeed
+            );
 
-            // 3. Marcar que salimos por salto para que Exit() NO lo aplique de nuevo
-            exitedByJump = false;
+            exitedByJump = true;
             stateMachine.SwitchState(typeof(PlayerIdleState));
             return;
         }
 
         // ---- MOVIMIENTO A LO LARGO DE LA PARED ----
-        // Se mueve en wallRunDirection a WallRunSpeed
-        Vector3 moveVelocity = wallRunDirection * stateMachine.WallRunSpeed;
+        Vector3 moveVelocity = wallRunDirection * currentWallRunSpeed;
+        stateMachine.CurrentHorizontalVelocity = moveVelocity;
 
         // ---- GRAVEDAD REDUCIDA ----
         // La gravedad se aplica multiplicada por WallRunGravityScale para que
@@ -189,11 +209,9 @@ public class PlayerWallRunState : PlayerBaseState
         // ---- Desuscribirse del input de salto ----
         stateMachine.UnsubscribeInputJump();
 
-        // ---- Aplicar impulso de salida si se salió por salto ----
-        // El impulso combina fuerza lateral (alejándose de la pared) + fuerza vertical
-        if (exitedByJump)
-        {
-            stateMachine.ApplyWallRunExitImpulse(wallNormal);
-        }
+        if (!exitedByJump)
+            stateMachine.SetVerticalVelocity(verticalVelocity);
+
+        stateMachine.NotifyWallRunEnded();
     }
 }

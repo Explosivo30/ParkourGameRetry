@@ -14,6 +14,8 @@ public class PlayerStateMachine : StateMachine
     [SerializeField] float _castRadius = 0.49f;
     [SerializeField] float _castLength = 0.1f;
     [SerializeField] float _maxAngle = 45f;
+    [SerializeField] float _groundProbeDistance = 0.18f;
+    [SerializeField, Range(0.5f, 1f)] float _groundProbeRadiusScale = 0.9f;
     Vector3 _downDir = Vector3.down;
 
     [SerializeField] LayerMask _groundMask = int.MinValue;
@@ -56,10 +58,26 @@ public class PlayerStateMachine : StateMachine
 
     [SerializeField, Range(0f, 1f)] float _turnaroundStrength;
     [SerializeField] float rotationSpeed = 50f;
+    [SerializeField] float _mouseLookSensitivity = 0.09f;
+    [SerializeField] float _gamepadLookSpeed = 180f;
     public CinemachineInputAxisController cineMachineCamera;
+    [SerializeField] CinemachinePanTilt _cameraPanTilt;
+
+    [Header("Speed Feedback")]
+    [SerializeField] bool _dynamicFov = true;
+    [SerializeField] float _baseFov = 90f;
+    [SerializeField] float _maxFov = 105f;
+    [SerializeField] float _fovSpeedReference = 23f;
+    [SerializeField] float _fovLerpSpeed = 6f;
+    [SerializeField] bool _enableParkourAudioFeedback = true;
+    CinemachineCamera _activeCinemachineCamera;
 
     // Estado interno de velocidad horizontal para conservar inercia real sin depender de cc.velocity
-    public Vector3 CurrentHorizontalVelocity { get { return _currentHorizontalVelocity; } set { _currentHorizontalVelocity = value; } }
+    public Vector3 CurrentHorizontalVelocity
+    {
+        get { return _currentHorizontalVelocity; }
+        set { _currentHorizontalVelocity = new Vector3(value.x, 0f, value.z); }
+    }
     private Vector3 _currentHorizontalVelocity;
     //---- END PLAYER OWN MOVEMENT
 
@@ -70,9 +88,13 @@ public class PlayerStateMachine : StateMachine
     [SerializeField] float _slideSpeed = 12f;              // Velocidad inicial del slide
     [SerializeField] float _slideDuration = 0.8f;           // Duración máxima del slide
     [SerializeField] float _slideMinSpeed = 5f;              // Velocidad mínima para poder iniciar slide
-    [SerializeField] float _slideFriction = 6f;              // Fricción durante el slide
+    [SerializeField] float _slideFriction = 3f;              // Fricción durante el slide
     [SerializeField] float _slideSlopeBoost = 15f;           // Velocidad extra al deslizar cuesta abajo
+    [SerializeField] float _slideSteering = 3f;
+    [SerializeField, Range(0f, 1f)] float _slideMomentumRetention = 0.99f;
+    [SerializeField] float _slideSpeedReward = 0.4f;
     [SerializeField] float _slideHeightReduction = 0.5f;     // Cuánto se reduce la altura del CC al deslizar
+    [SerializeField] float _slideCameraDropAmount = 0.55f;   // Bajada visible del punto de vista
     [SerializeField] float _slideCameraDropSpeed = 10f;      // Velocidad a la que la cámara baja al deslizar
 
     public float SlideSpeed => _slideSpeed;
@@ -80,7 +102,11 @@ public class PlayerStateMachine : StateMachine
     public float SlideMinSpeed => _slideMinSpeed;
     public float SlideFriction => _slideFriction;
     public float SlideSlopeBoost => _slideSlopeBoost;
+    public float SlideSteering => _slideSteering;
+    public float SlideMomentumRetention => _slideMomentumRetention;
+    public float SlideSpeedReward => _slideSpeedReward;
     public float SlideHeightReduction => _slideHeightReduction;
+    public float SlideCameraDropAmount => _slideCameraDropAmount;
     public float SlideCameraDropSpeed => _slideCameraDropSpeed;
 
     private float _originalCCHeight;
@@ -95,11 +121,14 @@ public class PlayerStateMachine : StateMachine
     [SerializeField] float _dashForce = 20f;              // Fuerza del dash
     [SerializeField] float _dashDuration = 0.15f;          // Duración del dash
     [SerializeField] float _dashCooldown = 1.5f;           // Cooldown entre dashes
+    [SerializeField] float _dashSpeedReward = 0.75f;
 
     public float DashForce => _dashForce;
     public float DashDuration => _dashDuration;
     public float DashCooldown => _dashCooldown;
+    public float DashSpeedReward => _dashSpeedReward;
     public float LastDashTime { get; set; } = -999f;
+    bool _airDashConsumed;
 
     // =====================================================================
     //  LEDGE GRAB — Colgarse de bordes altos
@@ -109,15 +138,21 @@ public class PlayerStateMachine : StateMachine
     [SerializeField] float _ledgeGrabMaxHeight = 2.5f;     // Altura máxima para agarrarse
     [SerializeField] float _ledgeGrabMinHeight = 1.6f;     // Altura mínima (por debajo = vault)
     [SerializeField] float _ledgeClimbDuration = 0.4f;     // Duración de la animación de subir
-    [SerializeField] float _ledgeJumpForce = 7f;           // Fuerza de salto desde ledge
+    [SerializeField] float _ledgeJumpForce = 10f;          // Fuerza vertical propia del salto desde ledge
+    [SerializeField] float _ledgeJumpHorizontalForce = 7f; // Impulso horizontal al separarse del borde
+    [SerializeField] float _ledgeHangClearance = 0.12f;
+    [SerializeField] float _ledgeClimbForwardOffset = 0.3f;
+    [SerializeField] float _ledgeClimbLandingClearance = 0.12f;
 
     public float LedgeCheckDistance => _ledgeCheckDistance;
     public float LedgeGrabMaxHeight => _ledgeGrabMaxHeight;
     public float LedgeGrabMinHeight => _ledgeGrabMinHeight;
     public float LedgeClimbDuration => _ledgeClimbDuration;
     public float LedgeJumpForce => _ledgeJumpForce;
+    public float LedgeJumpHorizontalForce => _ledgeJumpHorizontalForce;
     public Vector3 LedgeGrabPosition { get; set; }
     public Vector3 LedgeClimbTarget { get; set; }
+    public Vector3 LedgeWallNormal { get; private set; }
 
     // =====================================================================
     //  LANDING ROLL — Voltereta al aterrizar de caída alta
@@ -125,15 +160,24 @@ public class PlayerStateMachine : StateMachine
     [Header("Landing Roll")]
     [SerializeField] float _rollMinFallSpeed = 8f;         // Velocidad mínima de caída para activar roll
     [SerializeField] float _rollDuration = 0.5f;            // Duración del roll
-    [SerializeField] float _rollSpeedBoost = 1.2f;          // Multiplicador de velocidad durante roll
-    [SerializeField] float _hardLandingPenalty = 0.3f;       // % de velocidad que pierdes si NO haces roll
-    [SerializeField] float _rollCameraAngle = 15f;           // Inclinación de cámara durante roll
+    [SerializeField] float _rollInputBufferTime = 0.35f;    // Permite pulsar crouch poco antes de aterrizar
+    [SerializeField] float _rollMinimumSpeed = 7.5f;        // Un roll desde caída vertical debe avanzar de verdad
+    [SerializeField] float _rollSpeedBoost = 0.75f;         // Bonus aditivo, no multiplicador exponencial
+    [SerializeField] float _hardLandingPenalty = 0.65f;     // Velocidad que conservas si NO haces roll
+    [SerializeField] float _rollCameraAngle = 360f;          // Vuelta frontal completa durante el roll
+    [SerializeField] float _rollCameraDropAmount = 0.35f;    // Acerca la cámara al suelo en mitad del roll
 
     public float RollMinFallSpeed => _rollMinFallSpeed;
     public float RollDuration => _rollDuration;
+    public float RollMinimumSpeed => _rollMinimumSpeed;
     public float RollSpeedBoost => _rollSpeedBoost;
     public float HardLandingPenalty => _hardLandingPenalty;
     public float RollCameraAngle => _rollCameraAngle;
+    public float RollCameraDropAmount => _rollCameraDropAmount;
+
+    public bool LandingRollInputBuffered => controls != null
+        && (controls.CrouchHeld
+            || Time.unscaledTime - controls.LastCrouchPressedTime <= _rollInputBufferTime);
 
     // =====================================================================
     //  GRAPPLE — Gancho que impulsa al jugador hacia un punto
@@ -142,13 +186,22 @@ public class PlayerStateMachine : StateMachine
     [SerializeField] float _grappleMaxDistance = 30f;      // Distancia máxima del gancho
     [SerializeField] float _grappleSpeed = 20f;             // Velocidad de viaje
     [SerializeField] float _grappleExitBoost = 1.5f;        // Multiplicador de velocidad al llegar
+    [SerializeField] float _grappleStopDistance = 1.75f;
+    [SerializeField] float _grappleAimAssistRadius = 0.35f;
+    [SerializeField] float _grappleRefireDelay = 0.2f;
     [SerializeField] LayerMask _grappleMask;                // Capas donde se puede enganchar
 
     public float GrappleMaxDistance => _grappleMaxDistance;
     public float GrappleSpeed => _grappleSpeed;
     public float GrappleExitBoost => _grappleExitBoost;
+    public float GrappleStopDistance => _grappleStopDistance;
     public LayerMask GrappleMask => _grappleMask;
     public Vector3 GrappleTarget { get; set; }
+    public bool GrappleActive { get; private set; }
+    public bool GrappleTargetAvailable { get; private set; }
+    float _lastGrappleFireTime = -999f;
+    LineRenderer _grappleRope;
+    Material _grappleRopeMaterial;
 
     // =====================================================================
     //  ZIPLINE — Rails/cables deslizantes
@@ -163,23 +216,36 @@ public class PlayerStateMachine : StateMachine
     public float ZiplineExitUpForce => _ziplineExitUpForce;
 
     // =====================================================================
-    //  MOMENTUM SYSTEM — Multiplicador por encadenar parkour
+    //  FLOW STYLE — Rango D/C/B/A/S/SS y límite de velocidad suave
     // =====================================================================
-    [Header("Momentum System")]
-    [SerializeField] float _momentumMultiplierPerChain = 0.1f;  // Bonus de velocidad por cada acción encadenada
-    [SerializeField] float _momentumMaxMultiplier = 1.5f;        // Multiplicador máximo
-    [SerializeField] float _momentumDecayTime = 2f;              // Tiempo hasta perder el combo
-    [SerializeField] float _microSlowMoDuration = 0.05f;         // Duración del slow-mo al encadenar
+    [Header("Flow Style")]
+    [SerializeField] bool _showStyleHud = true;
+    [SerializeField] float _styleGraceTime = 1.6f;
+    [SerializeField] float _styleDecayPerSecond = 95f;
+    [SerializeField] float _styleMaxScore = 1000f;
+    [SerializeField, Range(0f, 1f)] float _firstRepeatMultiplier = 0.35f;
+    [SerializeField, Range(0f, 1f)] float _continuedRepeatMultiplier = 0.1f;
 
-    public float MomentumMultiplierPerChain => _momentumMultiplierPerChain;
-    public float MomentumMaxMultiplier => _momentumMaxMultiplier;
-    public float MomentumDecayTime => _momentumDecayTime;
-    public float MicroSlowMoDuration => _microSlowMoDuration;
+    [Header("Flow Speed Caps")]
+    [SerializeField] float _speedCapD = 14f;
+    [SerializeField] float _speedCapC = 15.5f;
+    [SerializeField] float _speedCapB = 17f;
+    [SerializeField] float _speedCapA = 19f;
+    [SerializeField] float _speedCapS = 21f;
+    [SerializeField] float _speedCapSS = 23f;
 
-    // Runtime momentum tracking
-    public int MomentumChainCount { get; set; }
-    public float MomentumMultiplier => 1f + Mathf.Min(MomentumChainCount * _momentumMultiplierPerChain, _momentumMaxMultiplier - 1f);
-    public float LastParkourActionTime { get; set; } = -999f;
+    public int MomentumChainCount { get; private set; }
+    public float MomentumMultiplier => 1f;
+    public float LastParkourActionTime { get; private set; } = -999f;
+    public float StyleScore => _styleScore;
+    public ParkourStyleRank StyleRank => GetStyleRank(_styleScore);
+    public float StyleRankProgress => GetStyleRankProgress(_styleScore);
+    public float StyleSpeedCap => GetStyleSpeedCap(StyleRank);
+
+    float _styleScore;
+    ParkourActionType _lastStyleAction = ParkourActionType.None;
+    ParkourActionType _previousStyleAction = ParkourActionType.None;
+    int _sameActionStreak;
 
     // ---- Crouch input ----
     public bool CrouchPressed { get; private set; }
@@ -196,6 +262,9 @@ public class PlayerStateMachine : StateMachine
     [SerializeField] float _wallRunMinSpeed = 3f;           // Velocidad mínima para poder iniciar wall-run
     [SerializeField] float _wallRunExitForce = 6f;          // Fuerza de impulso lateral al salir del wall-run
     [SerializeField] float _wallRunExitUpForce = 5f;        // Fuerza de impulso vertical al salir del wall-run
+    [SerializeField] float _wallRunReattachCooldown = 0.3f;
+    [SerializeField, Range(0f, 1f)] float _wallRunMomentumRetention = 0.99f;
+    [SerializeField] float _wallRunSpeedReward = 0.5f;
     [SerializeField] LayerMask _wallRunMask;                // Capas que se consideran paredes válidas para wall-run
 
     // Propiedades públicas para que PlayerWallRunState acceda a los parámetros
@@ -204,8 +273,11 @@ public class PlayerStateMachine : StateMachine
     public float WallRunGravityScale => _wallRunGravityScale;
     public float WallRunExitForce => _wallRunExitForce;
     public float WallRunExitUpForce => _wallRunExitUpForce;
+    public float WallRunMomentumRetention => _wallRunMomentumRetention;
+    public float WallRunSpeedReward => _wallRunSpeedReward;
     public float GravityForce => _gravityForce;
     public CharacterController CC => cc;
+    float _lastWallRunExitTime = -999f;
 
     // =====================================================================
     //  CAMERA TILT — Rotación Z de la cámara durante wall-run
@@ -221,12 +293,21 @@ public class PlayerStateMachine : StateMachine
     // Estado interno del tilt: se interpola de _currentCameraTilt hacia _targetCameraTilt
     private float _currentCameraTilt = 0f;
     private float _targetCameraTilt = 0f;
+    private float _cameraRollPitch;
+    private float _currentCameraHeightOffset;
+    private float _targetCameraHeightOffset;
+    private float _cameraHeightTransitionSpeed = 10f;
+    private Quaternion _cameraBaseLocalRotation = Quaternion.identity;
+    private Vector3 _cameraBaseLocalPosition;
+    private bool _cameraPoseInitialized;
 
 
     //----- START PLAYER GRAVITY
 
     [ExcelPort]
     [SerializeField] float _gravityForce = 9.81f;
+    [SerializeField] float _groundStickSpeed = 2f;
+    [SerializeField] float _terminalFallSpeed = 45f;
     public Vector3 GravityDir { get { return _gravityDir; } set { _gravityDir = value.normalized; } }
     Vector3 _gravityDir = Vector3.down;
 
@@ -248,6 +329,10 @@ public class PlayerStateMachine : StateMachine
     public float VaultExitSpeed => _vaultExitSpeed;
     [SerializeField] float _vaultExitUpForce = 1f;
     public float VaultExitUpForce => _vaultExitUpForce;
+    [SerializeField, Range(0f, 1f)] float _vaultMomentumRetention = 0.98f;
+    [SerializeField] float _vaultSpeedReward = 0.6f;
+    public float VaultMomentumRetention => _vaultMomentumRetention;
+    public float VaultSpeedReward => _vaultSpeedReward;
 
     public Vector3 VaultTargetPosition { get; private set; }
     public bool JumpPressed { get; private set; }
@@ -255,6 +340,7 @@ public class PlayerStateMachine : StateMachine
     [Header("Jump")]
     [ExcelPort]
     [SerializeField] float _jumpForce = 8f;
+    [SerializeField, Range(0.1f, 1f)] float _jumpCutMultiplier = 0.5f;
     public float JumpForce => _jumpForce;
 
     // Coyote Time: allows jumping for a brief window after walking off a ledge
@@ -275,15 +361,57 @@ public class PlayerStateMachine : StateMachine
     private void OnValidate()
     {
         _downDir = _downDir.normalized;
+        _groundProbeDistance = Mathf.Max(0.05f, _groundProbeDistance);
+        _terminalFallSpeed = Mathf.Max(_gravityForce, _terminalFallSpeed);
         controls = GetComponent<InputReader>();
-        
+        if (cc == null) cc = GetComponent<CharacterController>();
+        ConfigureDefaultLayers();
+    }
+
+    private void Awake()
+    {
+        controls = GetComponent<InputReader>();
+        if (cc == null) cc = GetComponent<CharacterController>();
+        ConfigureDefaultLayers();
     }
 
     private void Start()
     {
+        if (controls == null)
+            Debug.LogError("PlayerStateMachine necesita un InputReader en el mismo GameObject.");
+        if (cc == null)
+        {
+            Debug.LogError("PlayerStateMachine necesita un CharacterController.");
+            enabled = false;
+            return;
+        }
+
         // Guardar dimensiones originales del CharacterController para restaurar tras slide
         _originalCCHeight = cc.height;
         _originalCCCenter = cc.center;
+
+        if (_cameraPanTilt == null)
+            _cameraPanTilt = GetComponentInChildren<CinemachinePanTilt>(true);
+        if (_cameraTiltTarget == null && _cameraPanTilt != null)
+            _cameraTiltTarget = _cameraPanTilt.transform.parent;
+        InitializeCameraPose();
+        _activeCinemachineCamera = GetComponentInChildren<CinemachineCamera>(true);
+        InitializeGrappleRope();
+
+        if (_showStyleHud)
+        {
+            ParkourStyleHUD hud = GetComponent<ParkourStyleHUD>();
+            if (hud == null) hud = gameObject.AddComponent<ParkourStyleHUD>();
+            hud.Bind(this);
+        }
+
+        if (_enableParkourAudioFeedback)
+        {
+            ParkourAudioManager audioFeedback = GetComponent<ParkourAudioManager>();
+            if (audioFeedback == null)
+                audioFeedback = gameObject.AddComponent<ParkourAudioManager>();
+            audioFeedback.Bind(this);
+        }
 
         // Registrar todos los estados disponibles en la máquina de estados
         AddState(new PlayerIdleState(this));
@@ -295,8 +423,19 @@ public class PlayerStateMachine : StateMachine
         AddState(new PlayerLandingRollState(this));
         AddState(new PlayerGrappleState(this));
         AddState(new PlayerZiplineState(this));
+
+        if (controls != null)
+            controls.OnGrapplePressed += HandleGrapplePressed;
         
         SwitchState(typeof(PlayerIdleState));
+    }
+
+    private void OnDestroy()
+    {
+        if (controls != null)
+            controls.OnGrapplePressed -= HandleGrapplePressed;
+        if (_grappleRopeMaterial != null)
+            Destroy(_grappleRopeMaterial);
     }
 
     // =====================================================================
@@ -306,71 +445,204 @@ public class PlayerStateMachine : StateMachine
     {
         UpdateCameraTilt();
         TickMomentum();
+        UpdateDynamicFov();
+        UpdateGrappleAim();
+        UpdateGrappleRope();
+    }
+
+    private void ConfigureDefaultLayers()
+    {
+        if (_grappleMask.value != 0) return;
+
+        int grappleLayer = LayerMask.NameToLayer("Grapple");
+        if (grappleLayer >= 0)
+            _grappleMask = 1 << grappleLayer;
+    }
+
+    private bool TryGetGrappleHit(out RaycastHit hit)
+    {
+        Transform aimTransform = Camera.main != null ? Camera.main.transform : _cameraTiltTarget;
+        if (aimTransform == null)
+        {
+            hit = default;
+            return false;
+        }
+
+        Ray aimRay = new Ray(aimTransform.position, aimTransform.forward);
+        return Physics.SphereCast(
+            aimRay,
+            _grappleAimAssistRadius,
+            out hit,
+            _grappleMaxDistance,
+            _grappleMask,
+            QueryTriggerInteraction.Ignore
+        );
+    }
+
+    private void HandleGrapplePressed()
+    {
+        if (GetCurrentState() is PlayerGrappleState)
+        {
+            SwitchState(typeof(PlayerIdleState));
+            return;
+        }
+
+        if (Time.unscaledTime - _lastGrappleFireTime < _grappleRefireDelay)
+            return;
+
+        if (!TryGetGrappleHit(out RaycastHit hit))
+            return;
+
+        GrappleTarget = hit.point;
+        _lastGrappleFireTime = Time.unscaledTime;
+        SwitchState(typeof(PlayerGrappleState));
+    }
+
+    public void SetGrappleActive(bool active)
+    {
+        GrappleActive = active;
+        if (_grappleRope != null)
+            _grappleRope.enabled = active;
+    }
+
+    private void InitializeGrappleRope()
+    {
+        if (_grappleRope != null) return;
+
+        GameObject ropeObject = new GameObject("Grapple Rope");
+        ropeObject.transform.SetParent(transform, false);
+        _grappleRope = ropeObject.AddComponent<LineRenderer>();
+        _grappleRope.useWorldSpace = true;
+        _grappleRope.positionCount = 3;
+        _grappleRope.startWidth = 0.045f;
+        _grappleRope.endWidth = 0.018f;
+        _grappleRope.numCornerVertices = 5;
+        _grappleRope.numCapVertices = 4;
+
+        Shader ropeShader = Shader.Find("Universal Render Pipeline/Unlit");
+        if (ropeShader == null) ropeShader = Shader.Find("Sprites/Default");
+        if (ropeShader != null)
+        {
+            _grappleRopeMaterial = new Material(ropeShader);
+            Color ropeColor = new Color(0.15f, 1f, 0.85f, 1f);
+            _grappleRopeMaterial.color = ropeColor;
+            if (_grappleRopeMaterial.HasProperty("_BaseColor"))
+                _grappleRopeMaterial.SetColor("_BaseColor", ropeColor);
+            _grappleRope.material = _grappleRopeMaterial;
+        }
+
+        _grappleRope.enabled = false;
+    }
+
+    private void UpdateGrappleAim()
+    {
+        GrappleTargetAvailable = GrappleActive || TryGetGrappleHit(out _);
+    }
+
+    private void UpdateGrappleRope()
+    {
+        if (!GrappleActive || _grappleRope == null) return;
+
+        Vector3 start = _cameraTiltTarget != null
+            ? _cameraTiltTarget.position
+            : transform.position + Vector3.up * 0.7f;
+        Vector3 end = GrappleTarget;
+        float distance = Vector3.Distance(start, end);
+        Vector3 middle = Vector3.Lerp(start, end, 0.5f)
+            + Vector3.down * Mathf.Min(0.45f, distance * 0.025f);
+
+        _grappleRope.SetPosition(0, start);
+        _grappleRope.SetPosition(1, middle);
+        _grappleRope.SetPosition(2, end);
+    }
+
+    private void UpdateDynamicFov()
+    {
+        if (!_dynamicFov || _activeCinemachineCamera == null) return;
+
+        float speedRatio = Mathf.Clamp01(CurrentHorizontalVelocity.magnitude / _fovSpeedReference);
+        float targetFov = Mathf.Lerp(_baseFov, _maxFov, speedRatio);
+        var lens = _activeCinemachineCamera.Lens;
+        lens.FieldOfView = Mathf.Lerp(lens.FieldOfView, targetFov, _fovLerpSpeed * Time.unscaledDeltaTime);
+        _activeCinemachineCamera.Lens = lens;
     }
 
 
     public void GroundDetection()
     {
-        // Prevent snapping back to the ground if the player is moving up (e.g. jumping)
+        // No permitir que una esfera grande vuelva a pegarnos al suelo durante el ascenso.
         if (Vector3.Dot(currentForceGravity, -_downDir) > 0.1f)
         {
             _grounded = false;
+            _groundNormal = -_downDir;
             _sliding = false;
             return;
         }
 
-        if (Physics.SphereCast(transform.position + transform.up * _height, _castRadius, _downDir, out RaycastHit hitInfo, _castLength, _groundMask))
+        Vector3 worldCenter = transform.TransformPoint(cc.center);
+        float scaledHeight = cc.height * Mathf.Abs(transform.lossyScale.y);
+        float scaledRadius = cc.radius * Mathf.Max(
+            Mathf.Abs(transform.lossyScale.x),
+            Mathf.Abs(transform.lossyScale.z)
+        );
+        float radius = scaledRadius * _groundProbeRadiusScale;
+        float bottomOffset = Mathf.Max(0f, scaledHeight * 0.5f - scaledRadius);
+        Vector3 bottomSphereCenter = worldCenter + _downDir * bottomOffset;
+        Vector3 probeOrigin = bottomSphereCenter - _downDir * 0.03f;
+
+        bool hasGround = Physics.SphereCast(
+            probeOrigin,
+            radius,
+            _downDir,
+            out RaycastHit hitInfo,
+            _groundProbeDistance,
+            _groundMask,
+            QueryTriggerInteraction.Ignore
+        );
+
+        if (hasGround)
         {
-            Debug.Log(hitInfo.transform.up);
-            Debug.DrawRay(hitInfo.point, hitInfo.normal, Color.red, 50f);
-            
-            if (Vector3.Dot(hitInfo.normal, -_downDir) > Mathf.Sin((90f - _maxAngle) * Mathf.PI / 180f))
+            float groundAngle = Vector3.Angle(hitInfo.normal, -_downDir);
+            if (groundAngle <= _maxAngle)
             {
                 _groundNormal = hitInfo.normal;
                 _grounded = true;
                 _sliding = false;
-                Debug.DrawRay(hitInfo.point, hitInfo.normal, Color.blue, Time.fixedDeltaTime);
                 _slideNormal = hitInfo.normal;
+                _airDashConsumed = false;
             }
             else
             {
                 _grounded = false;
                 _sliding = true;
                 _slideNormal = hitInfo.normal;
+                _groundNormal = -_downDir;
             }
         }
         else
         {
             _grounded = false;
-            _groundNormal = Vector3.up;
+            _groundNormal = -_downDir;
             _sliding = false;
         }
-
-        Debug.Log($"Grounded: {Grounded}, Sliding: {Sliding}");
     }
 
     public Vector2 GetInput()// TODO Replace with new input system
     {
-        Vector2 moveInput;
-        moveInput = controls.MovementValue;
-        moveInput.Normalize();
-        return moveInput;
+        return controls != null ? Vector2.ClampMagnitude(controls.MovementValue, 1f) : Vector2.zero;
     }
 
     public void PlayerHorizontalMovement(Vector3 inputDir)
     {
-        Vector3 currentVelocity = _currentHorizontalVelocity;
-
-        // Override velocity si es requerido (ej: salir de un vault para parar el impulso brusco)
-        if (_forceZeroVelocityNextFrame)
-        {
-            currentVelocity = Vector3.zero;
-            _forceZeroVelocityNextFrame = false;
-        }
-
-        // Alinear los vectores al plano del suelo (para no volar ni hundirnos al correr)
-        inputDir = Vector3.ProjectOnPlane(inputDir, GroundNormal).normalized;
-        currentVelocity = Vector3.ProjectOnPlane(currentVelocity, GroundNormal);
+        Vector3 currentVelocity = new Vector3(
+            _currentHorizontalVelocity.x,
+            0f,
+            _currentHorizontalVelocity.z
+        );
+        float inputMagnitude = Mathf.Clamp01(inputDir.magnitude);
+        Vector3 wishDirection = inputMagnitude > 0.01f
+            ? new Vector3(inputDir.x, 0f, inputDir.z).normalized
+            : Vector3.zero;
 
         float accel = Grounded ? _acceleration : _airAcceleration;
         
@@ -378,7 +650,7 @@ public class PlayerStateMachine : StateMachine
         float currentDecelValue;
         if (Grounded)
         {
-            if (inputDir.sqrMagnitude < 0.01f)
+            if (wishDirection.sqrMagnitude < 0.01f)
             {
                 currentDecelValue = _brakingDeceleration; // Frenar al soltar
             }
@@ -399,9 +671,9 @@ public class PlayerStateMachine : StateMachine
             float drop = currentDecelValue * Time.deltaTime;
             
             // Freno extra si estamos girando drásticamente en el suelo (turnaround)
-            if (inputDir.sqrMagnitude > 0.01f && Grounded)
+            if (wishDirection.sqrMagnitude > 0.01f && Grounded)
             {
-                float dot = Vector3.Dot(currentVelocity.normalized, inputDir);
+                float dot = Vector3.Dot(currentVelocity.normalized, wishDirection);
                 if (dot < 0) 
                 {
                     // Al cambiar de dirección bruscamente, usamos el freno fuerte para ser ágiles
@@ -414,80 +686,82 @@ public class PlayerStateMachine : StateMachine
         }
 
         // 2. APLICAR ACELERACIÓN (Fuerza Aditiva)
-        if (inputDir.sqrMagnitude > 0.01f)
+        if (wishDirection.sqrMagnitude > 0.01f)
         {
-            // Calculamos cuánta de nuestra velocidad actual ya va en la dirección del input
-            float currentSpeedInInputDirection = Vector3.Dot(currentVelocity, inputDir);
+            float currentSpeedInInputDirection = Vector3.Dot(currentVelocity, wishDirection);
+            float desiredSpeed = _targetVelocity * inputMagnitude;
+            float maximumLocomotionSpeed = Mathf.Max(currentVelocity.magnitude, desiredSpeed);
             
-            // Calculamos cuánta velocidad nos falta para llegar a la velocidad máxima en esa dirección
-            float addSpeed = _targetVelocity - currentSpeedInInputDirection;
+            // La carrera normal acelera hasta targetVelocity. El exceso ganado
+            // mediante parkour se conserva y solo se desgasta con la fricción.
+            float addSpeed = desiredSpeed - currentSpeedInInputDirection;
 
             if (addSpeed > 0)
             {
                 // Aceleramos, pero sin pasarnos de 'addSpeed'
                 float accelSpeed = accel * Time.deltaTime;
                 if (accelSpeed > addSpeed) accelSpeed = addSpeed;
-                
-                currentVelocity += inputDir * accelSpeed;
+
+                currentVelocity += wishDirection * accelSpeed;
+
+                // El input puede redirigir el momentum, pero no fabricarlo al
+                // hacer strafe. Solo las acciones de parkour aumentan el techo.
+                if (currentVelocity.magnitude > maximumLocomotionSpeed)
+                    currentVelocity = currentVelocity.normalized * maximumLocomotionSpeed;
             }
-            // Si addSpeed <= 0, significa que ya vamos más rápido que _targetVelocity en esa dirección
-            // (por ejemplo, saliendo de un wall-run). No frenamos forzosamente, la fricción se encargará gradualmente.
         }
 
-        // 3. DESLIZAMIENTO EN PENDIENTES
-        if (Sliding && Grounded)
-        {
-            Vector3 slideVelocity = Vector3.ProjectOnPlane(currentVelocity, SlideNormal);
-            currentVelocity = slideVelocity;
-        }
-
-        // Guardar inercia real para el siguiente frame
+        currentVelocity.y = 0f;
         _currentHorizontalVelocity = currentVelocity;
 
-        // Mover el CharacterController (horizontalmente, la gravedad va por separado)
-        Vector3 posBeforeMove = transform.position;
-        cc.Move(currentVelocity * Time.deltaTime);
+        // El momentum se guarda siempre en el plano XZ. Solo el desplazamiento
+        // del frame se adapta a la pendiente para no mezclar gravedad y velocidad.
+        Vector3 movementVelocity = currentVelocity;
+        if (Grounded && currentVelocity.sqrMagnitude > 0.001f)
+        {
+            Vector3 slopeDirection = Vector3.ProjectOnPlane(currentVelocity.normalized, GroundNormal);
+            if (slopeDirection.sqrMagnitude > 0.001f)
+                movementVelocity = slopeDirection.normalized * currentVelocity.magnitude;
+        }
 
-        // ---- DETECCIÓN DE COLISIÓN ----
-        // Comparar el desplazamiento real con el deseado.
-        // Si el CC chocó con algo, el desplazamiento real será menor.
-        // Ajustamos _currentHorizontalVelocity para que no conserve momentum fantasma.
-        if (currentVelocity.sqrMagnitude > 0.01f)
+        Vector3 posBeforeMove = transform.position;
+        cc.Move(movementVelocity * Time.deltaTime);
+
+        if (movementVelocity.sqrMagnitude > 0.01f)
         {
             Vector3 actualDisplacement = transform.position - posBeforeMove;
-            Vector3 intendedDisplacement = currentVelocity * Time.deltaTime;
-
-            // Ignorar Y (la gravedad va por otro lado)
             actualDisplacement.y = 0f;
+            Vector3 intendedDisplacement = movementVelocity * Time.deltaTime;
             intendedDisplacement.y = 0f;
 
             if (intendedDisplacement.sqrMagnitude > 0.0001f)
             {
                 float movementRatio = actualDisplacement.magnitude / intendedDisplacement.magnitude;
-
-                // Si nos movimos menos del 80% de lo que queríamos, hay colisión
                 if (movementRatio < 0.8f)
                 {
-                    // Reducir la velocidad al ratio real del movimiento
-                    // Esto hace que si chocas contra una pared, pierdas el momentum
-                    _currentHorizontalVelocity *= movementRatio;
+                    // Conserva la componente tangencial al rozar una pared,
+                    // pero elimina el momentum fantasma que empuja contra ella.
+                    Vector3 actualVelocity = actualDisplacement / Mathf.Max(Time.deltaTime, 0.0001f);
+                    if (actualVelocity.magnitude < _currentHorizontalVelocity.magnitude)
+                        _currentHorizontalVelocity = actualVelocity;
                 }
             }
         }
-        }
+    }
 
     /// <summary>
     /// Convierte el input 2D en una dirección 3D basada en la rotación de la cámara.
     /// </summary>
     public Vector3 GetWorldMovementDirection(Vector2 input)
     {
-        Transform cameraTransform = Camera.main.transform;
+        Transform cameraTransform = Camera.main != null ? Camera.main.transform : transform;
         
         // Obtener forward y right de la cámara, ignorando la inclinación arriba/abajo
         Vector3 camRight = Vector3.ProjectOnPlane(cameraTransform.right, Vector3.up).normalized;
         Vector3 camForward = Vector3.ProjectOnPlane(cameraTransform.forward, Vector3.up).normalized;
 
-        return (camRight * input.x + camForward * input.y).normalized;
+        Vector3 worldDirection = camRight * input.x + camForward * input.y;
+        return worldDirection.sqrMagnitude > 1f ? worldDirection.normalized : worldDirection;
     }
 
 
@@ -517,6 +791,11 @@ public class PlayerStateMachine : StateMachine
     {
         JumpHeld = false;
         JumpPressed = false;
+
+        // Soltar pronto produce un salto corto; mantener conserva el arco completo.
+        float upwardSpeed = Vector3.Dot(currentForceGravity, -_gravityDir);
+        if (upwardSpeed > 0f)
+            currentForceGravity *= _jumpCutMultiplier;
     }
 
     public void ClearJumpInputFrame()
@@ -532,31 +811,26 @@ public class PlayerStateMachine : StateMachine
 
     public void ExecuteJump()
     {
-        currentForceGravity = -_gravityDir * _jumpForce;
+        ExecuteJump(_jumpForce);
+    }
+
+    public void ExecuteJump(float upwardForce)
+    {
+        SetVerticalVelocity(upwardForce);
         cc.Move(currentForceGravity * Time.deltaTime);
         JumpBufferCounter = 0f;
         CoyoteTimeCounter = 0f;
         JumpPressed = false; // Consume the initial jump press to prevent infinite jumps
-        _grounded = false;   // Force unground to ensure apply gravity doesn't reset velocity immediately
     }
 
-    private bool _forceZeroVelocityNextFrame;
-
     /// <summary>
-    /// Limpia inputs de salto y resetea la fisica interna al salir del vault.
-    /// Evita el salto automatico y el disparo de velocidad post-vault.
+    /// Limpia el input al salir del vault sin borrar el momentum ganado.
     /// </summary>
     public void ResetVaultPhysics()
     {
         JumpPressed = false;
         JumpHeld = false;
         JumpBufferCounter = 0f;
-
-        currentForceGravity = Vector3.zero;
-        _currentHorizontalVelocity = Vector3.zero;
-
-        // Ignora el spike de velocidad del CharacterController generado durante el vault
-        _forceZeroVelocityNextFrame = true;
     }
 
     // =====================================================================
@@ -585,38 +859,72 @@ public class PlayerStateMachine : StateMachine
 
     public void ApplyGravity()
     {
+        float dt = Time.deltaTime;
+
         if (Grounded)
         {
-            currentForceGravity = (_gravityDir * _gravityForce) * Time.deltaTime;
-            Vector3 groundedGravity = Vector3.ProjectOnPlane(_gravityDir * _gravityForce, GroundNormal.normalized);
-            cc.Move((GravityDir * _gravityForce) * Time.deltaTime);
+            // Una velocidad pequeña mantiene contacto sin intentar penetrar
+            // el suelo a 21 m/s como hacía la implementación anterior.
+            if (Vector3.Dot(currentForceGravity, -_gravityDir) <= 0f)
+                currentForceGravity = _gravityDir * _groundStickSpeed;
         }
         else
         {
-            if (Sliding)
-            {
-                currentForceGravity = Vector3.zero;
-                Vector3 slideDirection = Vector3.ProjectOnPlane(Vector3.down, SlideNormal).normalized;
-                cc.Move(slideDirection * _gravityForce * Time.deltaTime);
-            }
-            else
-            {
-                currentForceGravity += (_gravityDir * _gravityForce) * Time.deltaTime;
-                cc.Move(currentForceGravity * Time.deltaTime);
-            }
+            currentForceGravity += _gravityDir * _gravityForce * dt;
+            float fallSpeed = Vector3.Dot(currentForceGravity, _gravityDir);
+            if (fallSpeed > _terminalFallSpeed)
+                currentForceGravity += -_gravityDir * (fallSpeed - _terminalFallSpeed);
         }
+
+        cc.Move(currentForceGravity * dt);
+    }
+
+    public void SetVerticalVelocity(float upwardSpeed)
+    {
+        currentForceGravity = -_gravityDir * upwardSpeed;
+        _grounded = false;
+    }
+
+    public void ResetVerticalVelocity()
+    {
+        currentForceGravity = Vector3.zero;
+    }
+
+    public Vector3 GetVerticalVelocity()
+    {
+        return currentForceGravity;
     }
 
 
     public void PlayerLook()
     {
-        Vector2 rotateVector = controls.LookValue;
-        float horizontalInput = rotateVector.x;
+        if (controls == null) return;
 
-        if (horizontalInput != 0)
+        Vector2 look = controls.LookValue;
+        float yawDelta;
+        float pitchDelta;
+
+        if (controls.LookComesFromPointer)
         {
-            float rotationAngle = horizontalInput * rotationSpeed * Time.deltaTime;
-            transform.Rotate(0f, rotationAngle, 0f);
+            yawDelta = look.x * _mouseLookSensitivity;
+            pitchDelta = -look.y * _mouseLookSensitivity;
+        }
+        else
+        {
+            yawDelta = look.x * _gamepadLookSpeed * Time.unscaledDeltaTime;
+            pitchDelta = -look.y * _gamepadLookSpeed * Time.unscaledDeltaTime;
+        }
+
+        if (Mathf.Abs(yawDelta) > 0.0001f)
+            transform.Rotate(0f, yawDelta, 0f);
+
+        if (_cameraPanTilt != null && Mathf.Abs(pitchDelta) > 0.0001f)
+        {
+            _cameraPanTilt.TiltAxis.Value = Mathf.Clamp(
+                _cameraPanTilt.TiltAxis.Value + pitchDelta,
+                _cameraPanTilt.TiltAxis.Range.x,
+                _cameraPanTilt.TiltAxis.Range.y
+            );
         }
     }
 
@@ -670,15 +978,24 @@ public class PlayerStateMachine : StateMachine
     /// <returns>true si se puede iniciar wall-run</returns>
     public bool CanWallRun()
     {
-        // No se puede iniciar wall-run desde el suelo
         if (Grounded) return false;
+        if (Time.unscaledTime - _lastWallRunExitTime < _wallRunReattachCooldown) return false;
 
-        // Comprobar que el jugador lleva suficiente velocidad horizontal (usando la inercia real)
         Vector3 horizontalVel = new Vector3(_currentHorizontalVelocity.x, 0f, _currentHorizontalVelocity.z);
         if (horizontalVel.magnitude < _wallRunMinSpeed) return false;
 
-        // Detectar pared a cualquier lado
-        return CheckWallRight(out _) || CheckWallLeft(out _);
+        Vector2 input = GetInput();
+        if (input.sqrMagnitude < 0.1f) return false;
+
+        bool hasWall = CheckWallRight(out RaycastHit hit) || CheckWallLeft(out hit);
+        if (!hasWall) return false;
+
+        Vector3 wallTangent = Vector3.Cross(hit.normal, Vector3.up).normalized;
+        float velocityAlignment = Mathf.Abs(Vector3.Dot(horizontalVel.normalized, wallTangent));
+        Vector3 inputDirection = GetWorldMovementDirection(input).normalized;
+        float inputAlignment = Mathf.Abs(Vector3.Dot(inputDirection, wallTangent));
+
+        return velocityAlignment >= 0.3f && inputAlignment >= 0.2f;
     }
 
     // =====================================================================
@@ -697,6 +1014,26 @@ public class PlayerStateMachine : StateMachine
         _targetCameraTilt = targetAngle;
     }
 
+    public void SetCameraRollPitch(float pitchAngle)
+    {
+        _cameraRollPitch = pitchAngle;
+    }
+
+    public void SetCameraHeightOffset(float heightOffset, float transitionSpeed)
+    {
+        _targetCameraHeightOffset = heightOffset;
+        _cameraHeightTransitionSpeed = Mathf.Max(0.01f, transitionSpeed);
+    }
+
+    private void InitializeCameraPose()
+    {
+        if (_cameraTiltTarget == null) return;
+
+        _cameraBaseLocalRotation = _cameraTiltTarget.localRotation;
+        _cameraBaseLocalPosition = _cameraTiltTarget.localPosition;
+        _cameraPoseInitialized = true;
+    }
+
     /// <summary>
     /// Interpola suavemente el tilt actual hacia el tilt objetivo.
     /// Se llama desde LateUpdate para que se aplique después de toda la lógica de cámara.
@@ -711,12 +1048,21 @@ public class PlayerStateMachine : StateMachine
             _wallRunCameraTiltSpeed * Time.deltaTime
         );
 
-        // Aplicar la rotación Z al transform de la cámara (si está asignado)
         if (_cameraTiltTarget != null)
         {
-            Vector3 euler = _cameraTiltTarget.localEulerAngles;
-            euler.z = _currentCameraTilt;
-            _cameraTiltTarget.localEulerAngles = euler;
+            if (!_cameraPoseInitialized)
+                InitializeCameraPose();
+
+            _currentCameraHeightOffset = Mathf.MoveTowards(
+                _currentCameraHeightOffset,
+                _targetCameraHeightOffset,
+                _cameraHeightTransitionSpeed * Time.deltaTime
+            );
+
+            _cameraTiltTarget.localPosition = _cameraBaseLocalPosition
+                + Vector3.up * _currentCameraHeightOffset;
+            _cameraTiltTarget.localRotation = _cameraBaseLocalRotation
+                * Quaternion.Euler(_cameraRollPitch, 0f, _currentCameraTilt);
         }
     }
 
@@ -726,22 +1072,16 @@ public class PlayerStateMachine : StateMachine
     /// Se usa desde PlayerWallRunState al salir por salto.
     /// </summary>
     /// <param name="wallNormal">Normal de la pared (apunta hacia fuera de la pared)</param>
-    public void ApplyWallRunExitImpulse(Vector3 wallNormal)
+    public void ApplyWallRunExitImpulse(Vector3 wallNormal, Vector3 wallTangent, float alongWallSpeed)
     {
-        // Resetear la gravedad acumulada para que el impulso vertical sea limpio
-        currentForceGravity = Vector3.zero;
+        Vector3 flatNormal = Vector3.ProjectOnPlane(wallNormal, Vector3.up).normalized;
+        Vector3 flatTangent = Vector3.ProjectOnPlane(wallTangent, Vector3.up).normalized;
+        Vector3 exitHorizontalVelocity = flatTangent * alongWallSpeed
+                                       + flatNormal * _wallRunExitForce;
 
-        // Impulso combinado: lateral (normal de pared) + vertical (arriba)
-        Vector3 exitVelocity = wallNormal * _wallRunExitForce     // Fuerza que aleja de la pared
-                             + Vector3.up * _wallRunExitUpForce;   // Fuerza hacia arriba
-
-        // Aplicar la parte vertical a la gravedad
-        currentForceGravity = Vector3.up * _wallRunExitUpForce;
-        
-        // Inyectar el impulso lateral directo en nuestra inercia horizontal para no perderlo
-        _currentHorizontalVelocity = wallNormal * _wallRunExitForce;
-
-        cc.Move(exitVelocity * Time.deltaTime);
+        CurrentHorizontalVelocity = exitHorizontalVelocity;
+        SetVerticalVelocity(_wallRunExitUpForce);
+        cc.Move((exitHorizontalVelocity + currentForceGravity) * Time.deltaTime);
     }
 
     //  VAULT DETECTION
@@ -820,8 +1160,12 @@ public class PlayerStateMachine : StateMachine
     /// </summary>
     public void ShrinkCollider()
     {
-        cc.height = _originalCCHeight - _slideHeightReduction;
-        cc.center = _originalCCCenter + Vector3.down * (_slideHeightReduction * 0.5f);
+        float minimumHeight = cc.radius * 2f + 0.05f;
+        float reducedHeight = Mathf.Max(minimumHeight, _originalCCHeight - _slideHeightReduction);
+        float appliedReduction = _originalCCHeight - reducedHeight;
+
+        cc.height = reducedHeight;
+        cc.center = _originalCCCenter + Vector3.down * (appliedReduction * 0.5f);
     }
 
     /// <summary>
@@ -851,47 +1195,148 @@ public class PlayerStateMachine : StateMachine
     // =====================================================================
 
     /// <summary>
-    /// Registra una acción de parkour exitosa para el sistema de momentum.
-    /// Si se encadena dentro de MomentumDecayTime, el combo sube.
-    /// En combos > 1, se aplica un micro slow-mo cinematográfico.
+    /// Registra una acción real. Variar movimientos puntúa mucho más que repetir
+    /// el mismo; el estilo nunca modifica Time.timeScale.
     /// </summary>
-    public void RegisterParkourAction()
+    public void RegisterParkourAction(ParkourActionType action, float quality = 1f)
     {
-        if (Time.time - LastParkourActionTime < _momentumDecayTime)
-        {
+        quality = Mathf.Clamp(quality, 0.25f, 1.5f);
+        float now = Time.unscaledTime;
+
+        if (now - LastParkourActionTime <= _styleGraceTime)
             MomentumChainCount++;
+        else
+            MomentumChainCount = 1;
+
+        float varietyMultiplier = 1f;
+        if (action == _lastStyleAction)
+        {
+            _sameActionStreak++;
+            varietyMultiplier = _sameActionStreak == 1
+                ? _firstRepeatMultiplier
+                : _continuedRepeatMultiplier;
         }
         else
         {
-            MomentumChainCount = 1;
+            _sameActionStreak = 0;
+            if (action == _previousStyleAction)
+                varietyMultiplier = 0.65f;
         }
-        LastParkourActionTime = Time.time;
-        
-        // Micro slow-mo al encadenar (solo si es combo de 2+)
-        if (MomentumChainCount > 1)
+
+        float speedBonus = Mathf.InverseLerp(_targetVelocity, _speedCapSS, CurrentHorizontalVelocity.magnitude);
+        float points = GetActionStylePoints(action) * varietyMultiplier * quality;
+        points *= 1f + speedBonus * 0.25f;
+
+        _styleScore = Mathf.Clamp(_styleScore + points, 0f, _styleMaxScore);
+        _lastVarietyMultiplier = varietyMultiplier;
+        _previousStyleAction = _lastStyleAction;
+        _lastStyleAction = action;
+        LastParkourActionTime = now;
+    }
+
+    public void TickMomentum()
+    {
+        if (Time.unscaledTime - LastParkourActionTime <= _styleGraceTime)
+            return;
+
+        _styleScore = Mathf.MoveTowards(
+            _styleScore,
+            0f,
+            _styleDecayPerSecond * Time.unscaledDeltaTime
+        );
+
+        if (_styleScore <= 0.01f)
         {
-            Time.timeScale = 0.1f;
-            Time.fixedDeltaTime = 0.02f * Time.timeScale;
+            _styleScore = 0f;
+            MomentumChainCount = 0;
+            _lastStyleAction = ParkourActionType.None;
+            _previousStyleAction = ParkourActionType.None;
+            _sameActionStreak = 0;
         }
     }
 
-    /// <summary>
-    /// Actualiza el sistema de momentum cada frame.
-    /// Resetea el combo si ha pasado demasiado tiempo.
-    /// Restaura el timeScale si fue ralentizado por el micro slow-mo.
-    /// </summary>
-    public void TickMomentum()
+    public float ResolveActionSpeed(
+        float incomingSpeed,
+        float minimumSpeed,
+        float momentumRetention,
+        float earnedBoost
+    )
     {
-        if (Time.time - LastParkourActionTime > _momentumDecayTime)
+        float retainedSpeed = Mathf.Max(incomingSpeed * momentumRetention, minimumSpeed);
+        float rankBoost = 1f + (int)StyleRank * 0.08f;
+        float boost = earnedBoost * rankBoost * _lastVarietyMultiplier;
+
+        // El límite es suave: si ya veníamos por encima no se recorta de golpe.
+        float maximumAfterBoost = Mathf.Max(retainedSpeed, StyleSpeedCap);
+        return Mathf.Min(retainedSpeed + boost, maximumAfterBoost);
+    }
+
+    public bool CanDash()
+    {
+        if (Time.unscaledTime - LastDashTime < _dashCooldown) return false;
+        return Grounded || !_airDashConsumed;
+    }
+
+    public void NotifyDashStarted()
+    {
+        LastDashTime = Time.unscaledTime;
+        if (!Grounded) _airDashConsumed = true;
+    }
+
+    public void NotifyWallRunEnded()
+    {
+        _lastWallRunExitTime = Time.unscaledTime;
+    }
+
+    private float _lastVarietyMultiplier = 1f;
+
+    private static float GetActionStylePoints(ParkourActionType action)
+    {
+        return action switch
         {
-            MomentumChainCount = 0;
-        }
-        // Restaurar time scale si fue ralentizado
-        if (Time.timeScale < 1f)
+            ParkourActionType.Dash => 65f,
+            ParkourActionType.Slide => 75f,
+            ParkourActionType.Vault => 115f,
+            ParkourActionType.WallRun => 135f,
+            ParkourActionType.LandingRoll => 150f,
+            ParkourActionType.LedgeGrab => 80f,
+            ParkourActionType.Grapple => 175f,
+            ParkourActionType.Zipline => 125f,
+            _ => 0f
+        };
+    }
+
+    private static ParkourStyleRank GetStyleRank(float score)
+    {
+        if (score >= 900f) return ParkourStyleRank.SS;
+        if (score >= 700f) return ParkourStyleRank.S;
+        if (score >= 450f) return ParkourStyleRank.A;
+        if (score >= 250f) return ParkourStyleRank.B;
+        if (score >= 100f) return ParkourStyleRank.C;
+        return ParkourStyleRank.D;
+    }
+
+    private static float GetStyleRankProgress(float score)
+    {
+        if (score >= 900f) return Mathf.InverseLerp(900f, 1000f, score);
+        if (score >= 700f) return Mathf.InverseLerp(700f, 900f, score);
+        if (score >= 450f) return Mathf.InverseLerp(450f, 700f, score);
+        if (score >= 250f) return Mathf.InverseLerp(250f, 450f, score);
+        if (score >= 100f) return Mathf.InverseLerp(100f, 250f, score);
+        return Mathf.InverseLerp(0f, 100f, score);
+    }
+
+    private float GetStyleSpeedCap(ParkourStyleRank rank)
+    {
+        return rank switch
         {
-            Time.timeScale = Mathf.MoveTowards(Time.timeScale, 1f, Time.unscaledDeltaTime / _microSlowMoDuration);
-            Time.fixedDeltaTime = 0.02f * Time.timeScale;
-        }
+            ParkourStyleRank.C => _speedCapC,
+            ParkourStyleRank.B => _speedCapB,
+            ParkourStyleRank.A => _speedCapA,
+            ParkourStyleRank.S => _speedCapS,
+            ParkourStyleRank.SS => _speedCapSS,
+            _ => _speedCapD
+        };
     }
 
     // =====================================================================
@@ -907,6 +1352,18 @@ public class PlayerStateMachine : StateMachine
         if (Grounded) return false;
         
         Vector3 forward = new Vector3(transform.forward.x, 0f, transform.forward.z).normalized;
+        Vector3 horizontalVelocity = CurrentHorizontalVelocity;
+        Vector3 inputDirection = GetWorldMovementDirection(GetInput());
+
+        // No agarrarse automáticamente mientras nos alejamos o pasamos de lado.
+        bool movingTowardLedge = horizontalVelocity.magnitude > 0.5f
+            && Vector3.Dot(horizontalVelocity.normalized, forward) > 0.15f;
+        bool pressingTowardLedge = inputDirection.magnitude > 0.1f
+            && Vector3.Dot(inputDirection.normalized, forward) > 0.25f;
+        if (!movingTowardLedge && !pressingTowardLedge) return false;
+
+        float upwardSpeed = Vector3.Dot(currentForceGravity, -_gravityDir);
+        if (upwardSpeed > 3f) return false;
         
         // Comprobar si hay una pared enfrente
         if (!Physics.Raycast(transform.position + Vector3.up * 0.5f, forward, out RaycastHit wallHit, _ledgeCheckDistance, _vaultMask))
@@ -923,8 +1380,34 @@ public class PlayerStateMachine : StateMachine
         if (ledgeHeight < _ledgeGrabMinHeight || ledgeHeight > _ledgeGrabMaxHeight)
             return false;
         
-        LedgeGrabPosition = new Vector3(wallHit.point.x, topHit.point.y - cc.height, wallHit.point.z) + wallHit.normal * 0.1f;
-        LedgeClimbTarget = topHit.point + forward * 0.5f + Vector3.up * 0.1f;
+        float scaleY = Mathf.Abs(transform.lossyScale.y);
+        float scaleXZ = Mathf.Max(Mathf.Abs(transform.lossyScale.x), Mathf.Abs(transform.lossyScale.z));
+        float halfHeight = cc.height * scaleY * 0.5f;
+        float centerHeight = cc.center.y * scaleY;
+        float radius = cc.radius * scaleXZ;
+        float skin = cc.skinWidth * scaleXZ;
+
+        LedgeWallNormal = wallHit.normal.normalized;
+
+        // Posición de cuelgue: la parte superior de la cápsula queda justo
+        // debajo del borde y todo su radio permanece fuera de la pared.
+        LedgeGrabPosition = wallHit.point
+            + LedgeWallNormal * (radius + skin + 0.03f);
+        LedgeGrabPosition = new Vector3(
+            LedgeGrabPosition.x,
+            topHit.point.y - halfHeight - centerHeight - _ledgeHangClearance,
+            LedgeGrabPosition.z
+        );
+
+        // Posición final: la base de la cápsula queda encima de la superficie,
+        // no dentro de ella como ocurría con topHit.point + 0.1f.
+        LedgeClimbTarget = topHit.point
+            - LedgeWallNormal * (radius + _ledgeClimbForwardOffset);
+        LedgeClimbTarget = new Vector3(
+            LedgeClimbTarget.x,
+            topHit.point.y + halfHeight - centerHeight + skin + _ledgeClimbLandingClearance,
+            LedgeClimbTarget.z
+        );
         return true;
     }
 }
