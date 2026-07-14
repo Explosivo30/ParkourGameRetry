@@ -1,0 +1,444 @@
+using System;
+using System.Collections.Generic;
+using UnityEditor;
+using UnityEngine;
+
+namespace EZCollabTool
+{
+    [Serializable]
+    public class SceneSnapshot
+    {
+        public List<SerializedObject> objects = new List<SerializedObject>();
+    }
+
+    [Serializable]
+    public class SerializedObject
+    {
+        public string guid;
+        public string persistentId;
+        public string parentGuid;
+        public string name;
+        public bool active;
+        public ObjectSourceType sourceType;
+        public string prefabPath;
+        public PrimitiveType primitiveType;
+        public SerializedTransform localTransform;
+        public int siblingIndex;
+        public int layer;
+        public string tag;
+        public int staticEditorFlags;
+        public List<SerializedComponent> components = new List<SerializedComponent>();
+        public SerializedMesh mesh;
+    }
+
+    public static class EZSceneSerializer
+    {
+        static readonly HashSet<string> temporaryGuids = new HashSet<string>();
+
+        public static SceneSnapshot CaptureScene()
+        {
+            SceneSnapshot snapshot = new SceneSnapshot();
+            GameObject[] roots = UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetRootGameObjects();
+
+            foreach (GameObject root in roots)
+                SerializeHierarchy(root, null, snapshot.objects);
+
+            return snapshot;
+        }
+
+        public static CreateObjectPayload CreatePayload(GameObject go, string guid)
+        {
+            List<SerializedComponent> components = EZCollabObjectSerializer.CaptureComponents(go);
+            string prefabPath = GetPrefabPath(go);
+            ObjectSourceType sourceType;
+            PrimitiveType primitiveType = PrimitiveType.Cube;
+
+            if (!string.IsNullOrEmpty(prefabPath))
+            {
+                sourceType = ObjectSourceType.Prefab;
+            }
+            else if (TryGetPrimitiveType(go, out primitiveType))
+            {
+                sourceType = ObjectSourceType.Primitive;
+            }
+            else
+            {
+                sourceType = components.Count == 0 ? ObjectSourceType.Empty : ObjectSourceType.Generic;
+            }
+
+            string parentGuid = null;
+            if (go.transform.parent != null)
+                EZCollabState.TryGetGuid(go.transform.parent.gameObject, out parentGuid);
+
+            return new CreateObjectPayload
+            {
+                guid = guid,
+                parentGuid = parentGuid,
+                objectName = go.name,
+                sourceType = sourceType,
+                prefabPath = prefabPath,
+                primitiveType = primitiveType,
+                localTransform = SerializedTransform.FromTransform(go.transform),
+                siblingIndex = go.transform.GetSiblingIndex(),
+                active = go.activeSelf,
+                layer = go.layer,
+                tag = go.tag,
+                staticEditorFlags = (int)GameObjectUtility.GetStaticEditorFlags(go),
+                components = components,
+                mesh = EZCollabObjectSerializer.CaptureGeneratedMesh(go)
+            };
+        }
+
+        static void SerializeHierarchy(GameObject go, string parentGuid, List<SerializedObject> objects)
+        {
+            string guid = EZCollabState.GetOrAssignGuid(go);
+            CreateObjectPayload payload = CreatePayload(go, guid);
+            SerializedObject serialized = new SerializedObject
+            {
+                guid = guid,
+                persistentId = GetPersistentId(go),
+                parentGuid = parentGuid,
+                name = go.name,
+                active = go.activeSelf,
+                sourceType = payload.sourceType,
+                prefabPath = payload.prefabPath,
+                primitiveType = payload.primitiveType,
+                localTransform = payload.localTransform,
+                siblingIndex = payload.siblingIndex,
+                layer = payload.layer,
+                tag = payload.tag,
+                staticEditorFlags = payload.staticEditorFlags,
+                components = payload.components,
+                mesh = payload.mesh
+            };
+
+            objects.Add(serialized);
+
+            for (int i = 0; i < go.transform.childCount; i++)
+                SerializeHierarchy(go.transform.GetChild(i).gameObject, guid, objects);
+        }
+
+        public static void ApplySnapshot(SceneSnapshot snapshot)
+        {
+            if (snapshot == null || snapshot.objects == null)
+                throw new ArgumentException("The scene snapshot is empty.", nameof(snapshot));
+
+            EZCollabState.isApplyingRemoteChange = true;
+            try
+            {
+                GameObject[] initialRoots = UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetRootGameObjects();
+                Dictionary<string, GameObject> existingByPersistentId = BuildPersistentIdIndex(initialRoots);
+                HashSet<GameObject> claimedObjects = new HashSet<GameObject>();
+                HashSet<string> snapshotGuids = new HashSet<string>();
+
+                temporaryGuids.Clear();
+                EZCollabState.ClearObjectMappings();
+
+                foreach (SerializedObject data in snapshot.objects)
+                {
+                    if (string.IsNullOrEmpty(data.guid) || !snapshotGuids.Add(data.guid))
+                        continue;
+
+                    GameObject go = FindExistingObject(data, existingByPersistentId, initialRoots, claimedObjects);
+                    if (go == null)
+                        go = CreateFromSerialized(data);
+                    else
+                        RegisterRemoteGuid(go, data.guid);
+
+                    ApplySerializedState(go, data);
+                    claimedObjects.Add(go);
+                }
+
+                RemoveObjectsOutsideSnapshot(snapshotGuids);
+            }
+            finally
+            {
+                EZCollabState.isApplyingRemoteChange = false;
+            }
+        }
+
+        public static GameObject CreateFromPayload(CreateObjectPayload payload)
+        {
+            if (payload == null || string.IsNullOrEmpty(payload.guid))
+                throw new ArgumentException("The create-object payload has no GUID.", nameof(payload));
+
+            GameObject go = FindTemporaryChild(payload);
+            if (go == null)
+            {
+                if (payload.sourceType == ObjectSourceType.Prefab && !string.IsNullOrEmpty(payload.prefabPath))
+                {
+                    GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(payload.prefabPath);
+                    if (prefab != null)
+                        go = PrefabUtility.InstantiatePrefab(prefab) as GameObject;
+                }
+
+                if (go == null && payload.sourceType == ObjectSourceType.Primitive)
+                    go = GameObject.CreatePrimitive(payload.primitiveType);
+
+                if (go == null)
+                    go = new GameObject(payload.objectName);
+            }
+
+            Transform parent = null;
+            if (!string.IsNullOrEmpty(payload.parentGuid) &&
+                EZCollabState.guidToObject.TryGetValue(payload.parentGuid, out GameObject parentObject) &&
+                parentObject != null)
+            {
+                parent = parentObject.transform;
+            }
+
+            go.transform.SetParent(parent, false);
+            go.name = payload.objectName;
+            go.transform.localPosition = payload.localTransform.GetPosition();
+            go.transform.localRotation = payload.localTransform.GetRotation();
+            go.transform.localScale = payload.localTransform.GetScale();
+            go.transform.SetSiblingIndex(Math.Max(0, payload.siblingIndex));
+            RegisterRemoteGuid(go, payload.guid);
+            ApplyGameObjectData(go, payload.layer, payload.tag, payload.staticEditorFlags,
+                payload.components, payload.mesh);
+            go.SetActive(payload.active);
+
+            RegisterTemporaryDescendants(go);
+            return go;
+        }
+
+        static GameObject CreateFromSerialized(SerializedObject data)
+        {
+            CreateObjectPayload payload = new CreateObjectPayload
+            {
+                guid = data.guid,
+                parentGuid = data.parentGuid,
+                objectName = data.name,
+                sourceType = data.sourceType,
+                prefabPath = data.prefabPath,
+                primitiveType = data.primitiveType,
+                localTransform = data.localTransform,
+                siblingIndex = data.siblingIndex,
+                active = data.active,
+                layer = data.layer,
+                tag = data.tag,
+                staticEditorFlags = data.staticEditorFlags,
+                components = data.components,
+                mesh = data.mesh
+            };
+
+            return CreateFromPayload(payload);
+        }
+
+        static void ApplySerializedState(GameObject go, SerializedObject data)
+        {
+            if (go == null) return;
+
+            Transform parent = null;
+            if (!string.IsNullOrEmpty(data.parentGuid) &&
+                EZCollabState.guidToObject.TryGetValue(data.parentGuid, out GameObject parentObject) &&
+                parentObject != null)
+            {
+                parent = parentObject.transform;
+            }
+
+            go.transform.SetParent(parent, false);
+            go.name = data.name;
+            go.transform.localPosition = data.localTransform.GetPosition();
+            go.transform.localRotation = data.localTransform.GetRotation();
+            go.transform.localScale = data.localTransform.GetScale();
+            go.transform.SetSiblingIndex(Math.Max(0, data.siblingIndex));
+            ApplyGameObjectData(go, data.layer, data.tag, data.staticEditorFlags, data.components, data.mesh);
+            go.SetActive(data.active);
+        }
+
+        static void ApplyGameObjectData(
+            GameObject go,
+            int layer,
+            string tag,
+            int staticEditorFlags,
+            List<SerializedComponent> components,
+            SerializedMesh mesh)
+        {
+            go.layer = Math.Max(0, Math.Min(31, layer));
+            if (!string.IsNullOrEmpty(tag))
+            {
+                try
+                {
+                    go.tag = tag;
+                }
+                catch (UnityException)
+                {
+                    Debug.LogWarning($"[EZCollab] Tag '{tag}' does not exist in this project.");
+                }
+            }
+
+            GameObjectUtility.SetStaticEditorFlags(go, (StaticEditorFlags)staticEditorFlags);
+            EZCollabObjectSerializer.ApplyObjectData(go, components, mesh);
+            EditorUtility.SetDirty(go);
+        }
+
+        static Dictionary<string, GameObject> BuildPersistentIdIndex(GameObject[] roots)
+        {
+            Dictionary<string, GameObject> index = new Dictionary<string, GameObject>();
+            foreach (GameObject root in roots)
+                AddPersistentIds(root, index);
+
+            return index;
+        }
+
+        static void AddPersistentIds(GameObject go, Dictionary<string, GameObject> index)
+        {
+            string persistentId = GetPersistentId(go);
+            if (!string.IsNullOrEmpty(persistentId) && !index.ContainsKey(persistentId))
+                index.Add(persistentId, go);
+
+            for (int i = 0; i < go.transform.childCount; i++)
+                AddPersistentIds(go.transform.GetChild(i).gameObject, index);
+        }
+
+        static string GetPersistentId(GameObject go)
+        {
+            GlobalObjectId globalId = GlobalObjectId.GetGlobalObjectIdSlow(go);
+            string value = globalId.ToString();
+            if (string.IsNullOrEmpty(value) || value.StartsWith("GlobalObjectId_V1-0-", StringComparison.Ordinal))
+                return null;
+
+            return value;
+        }
+
+        static GameObject FindExistingObject(
+            SerializedObject data,
+            Dictionary<string, GameObject> existingByPersistentId,
+            GameObject[] initialRoots,
+            HashSet<GameObject> claimedObjects)
+        {
+            if (!string.IsNullOrEmpty(data.persistentId) &&
+                existingByPersistentId.TryGetValue(data.persistentId, out GameObject persistentMatch) &&
+                persistentMatch != null &&
+                !claimedObjects.Contains(persistentMatch))
+            {
+                return persistentMatch;
+            }
+
+            GameObject hierarchyMatch = null;
+            if (string.IsNullOrEmpty(data.parentGuid))
+            {
+                if (data.siblingIndex >= 0 && data.siblingIndex < initialRoots.Length)
+                    hierarchyMatch = initialRoots[data.siblingIndex];
+            }
+            else if (EZCollabState.guidToObject.TryGetValue(data.parentGuid, out GameObject parent) &&
+                     parent != null &&
+                     data.siblingIndex >= 0 &&
+                     data.siblingIndex < parent.transform.childCount)
+            {
+                hierarchyMatch = parent.transform.GetChild(data.siblingIndex).gameObject;
+            }
+
+            if (hierarchyMatch == null ||
+                hierarchyMatch.name != data.name ||
+                claimedObjects.Contains(hierarchyMatch))
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrEmpty(data.persistentId))
+            {
+                bool isTemporaryPrefabChild =
+                    EZCollabState.TryGetGuid(hierarchyMatch, out string existingGuid) &&
+                    temporaryGuids.Contains(existingGuid);
+                return isTemporaryPrefabChild ? hierarchyMatch : null;
+            }
+
+            return hierarchyMatch;
+        }
+
+        static GameObject FindTemporaryChild(CreateObjectPayload payload)
+        {
+            if (string.IsNullOrEmpty(payload.parentGuid) ||
+                !EZCollabState.guidToObject.TryGetValue(payload.parentGuid, out GameObject parent) ||
+                parent == null ||
+                payload.siblingIndex < 0 ||
+                payload.siblingIndex >= parent.transform.childCount)
+            {
+                return null;
+            }
+
+            GameObject candidate = parent.transform.GetChild(payload.siblingIndex).gameObject;
+            if (candidate.name != payload.objectName)
+                return null;
+
+            if (!EZCollabState.TryGetGuid(candidate, out string existingGuid))
+                return candidate;
+
+            return temporaryGuids.Contains(existingGuid) ? candidate : null;
+        }
+
+        static void RegisterRemoteGuid(GameObject go, string guid)
+        {
+            if (EZCollabState.TryGetGuid(go, out string previousGuid))
+                temporaryGuids.Remove(previousGuid);
+
+            EZCollabState.RegisterGuid(go, guid);
+        }
+
+        static void RegisterTemporaryDescendants(GameObject go)
+        {
+            for (int i = 0; i < go.transform.childCount; i++)
+            {
+                GameObject child = go.transform.GetChild(i).gameObject;
+                if (!EZCollabState.TryGetGuid(child, out string childGuid))
+                {
+                    childGuid = EZCollabState.GetOrAssignGuid(child);
+                    temporaryGuids.Add(childGuid);
+                }
+
+                RegisterTemporaryDescendants(child);
+            }
+        }
+
+        static void RemoveObjectsOutsideSnapshot(HashSet<string> snapshotGuids)
+        {
+            GameObject[] roots = UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetRootGameObjects();
+            foreach (GameObject root in roots)
+                RemoveOutsideSnapshot(root, snapshotGuids);
+        }
+
+        static void RemoveOutsideSnapshot(GameObject go, HashSet<string> snapshotGuids)
+        {
+            bool isInSnapshot = EZCollabState.TryGetGuid(go, out string guid) && snapshotGuids.Contains(guid);
+            if (!isInSnapshot)
+            {
+                EZCollabState.RemoveHierarchy(go);
+                UnityEngine.Object.DestroyImmediate(go);
+                return;
+            }
+
+            for (int i = go.transform.childCount - 1; i >= 0; i--)
+                RemoveOutsideSnapshot(go.transform.GetChild(i).gameObject, snapshotGuids);
+        }
+
+        static string GetPrefabPath(GameObject go)
+        {
+            if (!PrefabUtility.IsOutermostPrefabInstanceRoot(go))
+                return null;
+
+            GameObject prefabAsset = PrefabUtility.GetCorrespondingObjectFromSource(go);
+            return prefabAsset == null ? null : AssetDatabase.GetAssetPath(prefabAsset);
+        }
+
+        static bool TryGetPrimitiveType(GameObject go, out PrimitiveType primitiveType)
+        {
+            primitiveType = PrimitiveType.Cube;
+            MeshFilter filter = go.GetComponent<MeshFilter>();
+            if (filter == null || filter.sharedMesh == null)
+                return false;
+
+            string meshName = filter.sharedMesh.name.ToLowerInvariant();
+            if (meshName.Contains("sphere")) primitiveType = PrimitiveType.Sphere;
+            else if (meshName.Contains("cylinder")) primitiveType = PrimitiveType.Cylinder;
+            else if (meshName.Contains("capsule")) primitiveType = PrimitiveType.Capsule;
+            else if (meshName.Contains("plane")) primitiveType = PrimitiveType.Plane;
+            else if (meshName.Contains("quad")) primitiveType = PrimitiveType.Quad;
+            else if (meshName.Contains("cube")) primitiveType = PrimitiveType.Cube;
+            else return false;
+
+            return true;
+        }
+    }
+}
