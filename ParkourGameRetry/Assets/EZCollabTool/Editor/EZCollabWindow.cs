@@ -74,7 +74,7 @@ namespace EZCollabTool
             }
 
             if (isConnecting)
-                EditorGUILayout.HelpBox("Conectando y esperando el snapshot...", UnityEditor.MessageType.Info);
+                EditorGUILayout.HelpBox("Conectando y esperando la sincronización inicial...", UnityEditor.MessageType.Info);
         }
 
         bool ValidateNameAndPort()
@@ -115,6 +115,14 @@ namespace EZCollabTool
             string role = EZCollabState.isHost ? "HOST" : "cliente";
             EditorGUILayout.LabelField($"Sesión activa — {role}", EditorStyles.boldLabel);
             EditorGUILayout.LabelField($"Tú: {EZCollabState.localPeerName}");
+            EditorGUILayout.LabelField(
+                $"Objetos indexados: {EZCollabState.guidToObject.Count} · Revisión: {EZCollabState.lastServerSequence}",
+                EditorStyles.miniLabel);
+
+            if (EZCollabSession.isReconnecting)
+                EditorGUILayout.HelpBox(
+                    "Conexión perdida. Recuperando únicamente las revisiones pendientes...",
+                    UnityEditor.MessageType.Warning);
 
             if (EZCollabState.isHost)
             {
@@ -152,6 +160,30 @@ namespace EZCollabTool
 
             if (!anyLocks)
                 EditorGUILayout.LabelField("Ninguno", EditorStyles.miniLabel);
+
+            if (EZCollabState.assetWarnings.Count > 0)
+            {
+                GUILayout.Space(6);
+                EditorGUILayout.LabelField(
+                    $"Assets incompatibles ({EZCollabState.assetWarnings.Count})",
+                    EditorStyles.boldLabel);
+
+                int displayed = 0;
+                foreach (string warning in EZCollabState.assetWarnings)
+                {
+                    EditorGUILayout.HelpBox(warning, UnityEditor.MessageType.Warning);
+                    if (++displayed >= 5)
+                        break;
+                }
+
+                if (EZCollabState.assetWarnings.Count > displayed)
+                    EditorGUILayout.LabelField(
+                        $"Y {EZCollabState.assetWarnings.Count - displayed} advertencias más en la consola.",
+                        EditorStyles.miniLabel);
+
+                if (GUILayout.Button("Limpiar advertencias de assets"))
+                    EZCollabState.assetWarnings.Clear();
+            }
 
             GUILayout.FlexibleSpace();
 

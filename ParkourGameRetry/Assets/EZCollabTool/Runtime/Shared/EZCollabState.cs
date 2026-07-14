@@ -16,6 +16,13 @@ namespace EZCollabTool
         public static Dictionary<string, GameObject> guidToObject = new Dictionary<string, GameObject>();
         public static Dictionary<GameObject, string> objectToGuid = new Dictionary<GameObject, string>();
         public static Dictionary<string, string> connectedPeers = new Dictionary<string, string>();
+        public static Dictionary<int, string> instanceIdToGuid = new Dictionary<int, string>();
+        public static Dictionary<string, string> parentGuidByGuid = new Dictionary<string, string>();
+        public static Dictionary<string, HashSet<string>> childGuidsByParent =
+            new Dictionary<string, HashSet<string>>();
+        public static Dictionary<string, long> objectSequences = new Dictionary<string, long>();
+        public static HashSet<string> assetWarnings = new HashSet<string>();
+        public static long lastServerSequence { get; private set; }
         public static Dictionary<string, string> lockedObjects = new Dictionary<string, string>();
         public static HashSet<string> myLocks = new HashSet<string>();
 
@@ -32,6 +39,14 @@ namespace EZCollabTool
             connectedPeers.Clear();
             lockedObjects.Clear();
             myLocks.Clear();
+            instanceIdToGuid.Clear();
+            parentGuidByGuid.Clear();
+            childGuidsByParent.Clear();
+            objectSequences.Clear();
+            assetWarnings.Clear();
+            lastServerSequence = 0;
+            EZCollabObjectSerializer.ResetPendingReferences();
+            EZCollabAssetValidator.ResetCache();
 
             IndexExistingScene();
         }
@@ -46,6 +61,11 @@ namespace EZCollabTool
             connectedPeers.Clear();
             lockedObjects.Clear();
             myLocks.Clear();
+            instanceIdToGuid.Clear();
+            parentGuidByGuid.Clear();
+            childGuidsByParent.Clear();
+            objectSequences.Clear();
+            EZCollabObjectSerializer.ResetPendingReferences();
         }
 
         public static string GetOrAssignGuid(GameObject go)
@@ -63,18 +83,32 @@ namespace EZCollabTool
             if (go == null || string.IsNullOrEmpty(guid)) return;
 
             if (objectToGuid.TryGetValue(go, out string previousGuid) && previousGuid != guid)
+            {
                 guidToObject.Remove(previousGuid);
+                RemoveHierarchyIndex(previousGuid);
+            }
 
             if (guidToObject.TryGetValue(guid, out GameObject previousObject) && previousObject != go)
+            {
                 objectToGuid.Remove(previousObject);
+                if (previousObject != null)
+                    instanceIdToGuid.Remove(previousObject.GetInstanceID());
+            }
 
             guidToObject[guid] = go;
             objectToGuid[go] = guid;
+            instanceIdToGuid[go.GetInstanceID()] = guid;
+            UpdateHierarchyIndex(go, guid);
         }
 
         public static bool TryGetGuid(GameObject go, out string guid)
         {
             return objectToGuid.TryGetValue(go, out guid);
+        }
+
+        public static bool TryGetGuid(int instanceId, out string guid)
+        {
+            return instanceIdToGuid.TryGetValue(instanceId, out guid);
         }
 
         public static void RemoveObject(GameObject go)
@@ -86,11 +120,32 @@ namespace EZCollabTool
         public static void RemoveGuid(string guid)
         {
             if (guidToObject.TryGetValue(guid, out GameObject go))
+            {
                 objectToGuid.Remove(go);
+                if (go != null)
+                    instanceIdToGuid.Remove(go.GetInstanceID());
+            }
 
             guidToObject.Remove(guid);
             lockedObjects.Remove(guid);
             myLocks.Remove(guid);
+            objectSequences.Remove(guid);
+            RemoveHierarchyIndex(guid);
+        }
+
+        public static void RemoveGuidHierarchy(string guid)
+        {
+            if (string.IsNullOrEmpty(guid))
+                return;
+
+            if (childGuidsByParent.TryGetValue(guid, out HashSet<string> children))
+            {
+                List<string> childCopy = new List<string>(children);
+                foreach (string childGuid in childCopy)
+                    RemoveGuidHierarchy(childGuid);
+            }
+
+            RemoveGuid(guid);
         }
 
         public static void RemoveHierarchy(GameObject go)
@@ -121,6 +176,11 @@ namespace EZCollabTool
             objectToGuid.Clear();
             lockedObjects.Clear();
             myLocks.Clear();
+            instanceIdToGuid.Clear();
+            parentGuidByGuid.Clear();
+            childGuidsByParent.Clear();
+            objectSequences.Clear();
+            EZCollabObjectSerializer.ResetPendingReferences();
         }
 
         public static bool IsLockedByOther(string guid)
@@ -181,6 +241,87 @@ namespace EZCollabTool
             GetOrAssignGuid(go);
             for (int i = 0; i < go.transform.childCount; i++)
                 IndexHierarchy(go.transform.GetChild(i).gameObject);
+        }
+
+        public static void UpdateHierarchyIndex(GameObject go)
+        {
+            if (go != null && TryGetGuid(go, out string guid))
+                UpdateHierarchyIndex(go, guid);
+        }
+
+        static void UpdateHierarchyIndex(GameObject go, string guid)
+        {
+            RemoveParentLink(guid);
+
+            string parentGuid = null;
+            if (go.transform.parent != null)
+                TryGetGuid(go.transform.parent.gameObject, out parentGuid);
+
+            parentGuidByGuid[guid] = parentGuid;
+            if (string.IsNullOrEmpty(parentGuid))
+                return;
+
+            if (!childGuidsByParent.TryGetValue(parentGuid, out HashSet<string> children))
+            {
+                children = new HashSet<string>();
+                childGuidsByParent[parentGuid] = children;
+            }
+            children.Add(guid);
+        }
+
+        static void RemoveHierarchyIndex(string guid)
+        {
+            RemoveParentLink(guid);
+            parentGuidByGuid.Remove(guid);
+            childGuidsByParent.Remove(guid);
+        }
+
+        static void RemoveParentLink(string guid)
+        {
+            if (!parentGuidByGuid.TryGetValue(guid, out string parentGuid) ||
+                string.IsNullOrEmpty(parentGuid) ||
+                !childGuidsByParent.TryGetValue(parentGuid, out HashSet<string> siblings))
+            {
+                return;
+            }
+
+            siblings.Remove(guid);
+            if (siblings.Count == 0)
+                childGuidsByParent.Remove(parentGuid);
+        }
+
+        public static void ObserveServerSequence(long sequence)
+        {
+            if (sequence > lastServerSequence)
+                lastServerSequence = sequence;
+        }
+
+        public static bool ShouldApplyObjectSequence(string guid, long sequence)
+        {
+            ObserveServerSequence(sequence);
+            if (sequence <= 0 || string.IsNullOrEmpty(guid))
+                return true;
+
+            if (objectSequences.TryGetValue(guid, out long current) && current >= sequence)
+                return false;
+
+            objectSequences[guid] = sequence;
+            return true;
+        }
+
+        public static void PrepareForReconnect()
+        {
+            connectedPeers.Clear();
+            lockedObjects.Clear();
+            myLocks.Clear();
+        }
+
+        public static void ReportAssetWarning(string warning)
+        {
+            if (string.IsNullOrWhiteSpace(warning) || !assetWarnings.Add(warning))
+                return;
+
+            Debug.LogWarning($"[EZCollab] {warning}");
         }
     }
 }

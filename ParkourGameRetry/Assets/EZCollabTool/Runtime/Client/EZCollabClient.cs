@@ -11,26 +11,32 @@ namespace EZCollabTool
     public class EZCollabClient
     {
         const int ConnectTimeoutMilliseconds = 10000;
-        const int SnapshotTimeoutMilliseconds = 20000;
+        const int InitialSyncTimeoutMilliseconds = 120000;
 
         TcpClient client;
         NetworkStream stream;
         CancellationTokenSource cts;
         SemaphoreSlim sendLock;
-        TaskCompletionSource<bool> snapshotReceived;
+        TaskCompletionSource<bool> initialSyncReceived;
         volatile bool connected;
         volatile bool unexpectedDisconnect;
+
+        sealed class NetworkReadBuffer
+        {
+            public readonly byte[] length = new byte[4];
+            public byte[] payload = new byte[32768];
+        }
 
         public readonly ConcurrentQueue<EZMessage> incomingMessages = new ConcurrentQueue<EZMessage>();
 
         public bool isConnected => connected;
         public bool connectionLostUnexpectedly => unexpectedDisconnect;
 
-        public async Task<bool> Connect(string host, int port)
+        public async Task<bool> Connect(string host, int port, long lastSequence = 0)
         {
             cts = new CancellationTokenSource();
             sendLock = new SemaphoreSlim(1, 1);
-            snapshotReceived = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            initialSyncReceived = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             unexpectedDisconnect = false;
 
             client = new TcpClient();
@@ -51,19 +57,20 @@ namespace EZCollabTool
                 PeerPayload peerPayload = new PeerPayload
                 {
                     peerId = EZCollabState.localPeerId,
-                    peerName = EZCollabState.localPeerName
+                    peerName = EZCollabState.localPeerName,
+                    lastSequence = lastSequence
                 };
                 EZMessage joinMessage = EZMessage.Create(EZMessageType.PeerJoined, EZCollabState.localPeerId, peerPayload);
                 await Send(joinMessage);
 
                 _ = Task.Run(ReceiveLoop);
 
-                Task snapshotTimeout = Task.Delay(SnapshotTimeoutMilliseconds, cts.Token);
-                Task completedSnapshotTask = await Task.WhenAny(snapshotReceived.Task, snapshotTimeout);
-                if (completedSnapshotTask != snapshotReceived.Task)
-                    throw new TimeoutException("The host did not send a scene snapshot within 20 seconds.");
+                Task syncTimeout = Task.Delay(InitialSyncTimeoutMilliseconds, cts.Token);
+                Task completedSyncTask = await Task.WhenAny(initialSyncReceived.Task, syncTimeout);
+                if (completedSyncTask != initialSyncReceived.Task)
+                    throw new TimeoutException("The host did not complete synchronization within 120 seconds.");
 
-                await snapshotReceived.Task;
+                await initialSyncReceived.Task;
                 _ = Task.Run(HeartbeatLoop);
                 return true;
             }
@@ -124,19 +131,18 @@ namespace EZCollabTool
 
         async Task ReceiveLoop()
         {
-            byte[] lengthBuffer = new byte[4];
-            byte[] payloadBuffer = new byte[32768];
+            NetworkReadBuffer readBuffer = new NetworkReadBuffer();
 
             try
             {
                 while (!cts.Token.IsCancellationRequested && connected)
                 {
-                    EZMessage message = await ReadMessage(lengthBuffer, payloadBuffer, cts.Token);
+                    EZMessage message = await ReadMessage(readBuffer, cts.Token);
                     if (message == null) break;
 
                     incomingMessages.Enqueue(message);
-                    if (message.type == EZMessageType.SceneSnapshot)
-                        snapshotReceived.TrySetResult(true);
+                    if (message.type == EZMessageType.RecoveryComplete)
+                        initialSyncReceived.TrySetResult(true);
                 }
             }
             catch (OperationCanceledException)
@@ -152,31 +158,31 @@ namespace EZCollabTool
                 bool wasUnexpected = !cts.Token.IsCancellationRequested;
                 connected = false;
 
-                if (!snapshotReceived.Task.IsCompleted)
-                    snapshotReceived.TrySetException(new IOException("The host closed the connection before sending the snapshot."));
+                if (!initialSyncReceived.Task.IsCompleted)
+                    initialSyncReceived.TrySetException(new IOException("The host closed the connection before synchronization completed."));
 
                 if (wasUnexpected)
                     unexpectedDisconnect = true;
             }
         }
 
-        async Task<EZMessage> ReadMessage(byte[] lengthBuffer, byte[] payloadBuffer, CancellationToken token)
+        async Task<EZMessage> ReadMessage(NetworkReadBuffer buffer, CancellationToken token)
         {
-            int read = await ReadExact(stream, lengthBuffer, 4, token);
+            int read = await ReadExact(stream, buffer.length, 4, token);
             if (read == 0) return null;
 
             if (!BitConverter.IsLittleEndian)
-                Array.Reverse(lengthBuffer);
+                Array.Reverse(buffer.length);
 
-            int length = BitConverter.ToInt32(lengthBuffer, 0);
+            int length = BitConverter.ToInt32(buffer.length, 0);
             if (length <= 0 || length > EZMessage.MaxPayloadBytes)
                 throw new InvalidOperationException($"Invalid payload length: {length}.");
 
-            if (payloadBuffer.Length < length)
-                payloadBuffer = new byte[length];
+            if (buffer.payload.Length < length)
+                buffer.payload = new byte[length];
 
-            read = await ReadExact(stream, payloadBuffer, length, token);
-            return read == 0 ? null : EZMessage.FromBytes(payloadBuffer, length);
+            read = await ReadExact(stream, buffer.payload, length, token);
+            return read == 0 ? null : EZMessage.FromBytes(buffer.payload, length);
         }
 
         static async Task<int> ReadExact(NetworkStream networkStream, byte[] buffer, int count, CancellationToken token)

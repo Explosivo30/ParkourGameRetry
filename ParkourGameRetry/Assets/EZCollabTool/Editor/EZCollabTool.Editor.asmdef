@@ -3,7 +3,9 @@
   "rootNamespace": "EZCollabTool",
   "references": [
     "EZCollabTool.Runtime",
-    "Newtonsoft.Json"
+    "Newtonsoft.Json",
+    "Unity.ProBuilder",
+    "Unity.ProBuilder.Editor"
   ],
   "includePlatforms": [
     "Editor"

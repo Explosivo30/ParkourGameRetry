@@ -17,7 +17,6 @@ namespace EZCollabTool
         static EZCollabHooks()
         {
             Selection.selectionChanged += OnSelectionChanged;
-            EditorApplication.hierarchyChanged += OnHierarchyChanged;
             Undo.postprocessModifications += OnModifications;
             EditorApplication.update += OnUpdate;
         }
@@ -37,16 +36,23 @@ namespace EZCollabTool
 
             if (EZCollabState.isHost)
             {
+                ProcessIncomingMessages();
                 EZCollabSession.server?.ProcessMainThreadRequests();
             }
             else if (EZCollabSession.client != null && EZCollabSession.client.connectionLostUnexpectedly)
             {
-                Debug.LogWarning("[EZCollab] The host connection was closed.");
-                EZCollabSession.Stop();
+                EZCollabSession.BeginReconnect();
                 return;
             }
 
-            ProcessIncomingMessages();
+            if (!EZCollabState.isHost)
+                ProcessIncomingMessages();
+        }
+
+        public static void ReacquireSelectedLocks()
+        {
+            foreach (GameObject go in Selection.gameObjects)
+                EnsureLockForObject(go);
         }
 
         static void OnSelectionChanged()
@@ -180,6 +186,28 @@ namespace EZCollabTool
             SendLocalMessage(message);
         }
 
+        public static void EnsureLockForObject(GameObject go)
+        {
+            if (!EZCollabState.inSession || EZCollabState.isApplyingRemoteChange || go == null ||
+                !EZCollabState.TryGetGuid(go, out string guid) || EZCollabState.IsLockedByMe(guid) ||
+                EZCollabState.IsLockedByOther(guid) || pendingLockRequests.Contains(guid))
+            {
+                return;
+            }
+
+            RequestLock(guid);
+        }
+
+        public static void ReleaseObjectLock(string guid)
+        {
+            if (string.IsNullOrEmpty(guid))
+                return;
+
+            pendingLockRequests.Remove(guid);
+            if (EZCollabState.IsLockedByMe(guid))
+                ReleaseLock(guid);
+        }
+
         static void SendLocalMessage(EZMessage message)
         {
             if (EZCollabState.isHost)
@@ -244,8 +272,10 @@ namespace EZCollabTool
 
             if (queue == null) return;
 
+            System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
             int processed = 0;
-            while (queue.TryDequeue(out EZMessage message) && processed < 32)
+            while (processed < 128 && stopwatch.ElapsedMilliseconds < 5 &&
+                   queue.TryDequeue(out EZMessage message))
             {
                 ApplyMessage(message);
                 processed++;
@@ -254,6 +284,10 @@ namespace EZCollabTool
 
         static void ApplyMessage(EZMessage message)
         {
+            EZCollabAdvancedSync.ObserveIncoming(message);
+            if (EZCollabAdvancedSync.TryApplyMessage(message))
+                return;
+
             switch (message.type)
             {
                 case EZMessageType.SceneSnapshot:
@@ -266,9 +300,11 @@ namespace EZCollabTool
                 case EZMessageType.TransformDelta:
                 {
                     TransformPayload payload = message.GetPayload<TransformPayload>();
-                    if (!EZCollabState.guidToObject.TryGetValue(payload.guid, out GameObject go) || go == null)
+                    if (payload == null || !EZCollabState.ShouldApplyObjectSequence(payload.guid, message.sequence) ||
+                        !EZCollabState.guidToObject.TryGetValue(payload.guid, out GameObject go) || go == null)
                         break;
 
+                    EZCollabAdvancedSync.SuppressRemoteObject(go);
                     EZCollabState.isApplyingRemoteChange = true;
                     try
                     {
@@ -287,12 +323,14 @@ namespace EZCollabTool
                 case EZMessageType.CreateObject:
                 {
                     CreateObjectPayload payload = message.GetPayload<CreateObjectPayload>();
-                    if (EZCollabState.guidToObject.ContainsKey(payload.guid)) break;
+                    if (payload == null || !EZCollabState.ShouldApplyObjectSequence(payload.guid, message.sequence) ||
+                        EZCollabState.guidToObject.ContainsKey(payload.guid)) break;
 
                     EZCollabState.isApplyingRemoteChange = true;
                     try
                     {
-                        EZSceneSerializer.CreateFromPayload(payload);
+                        GameObject created = EZSceneSerializer.CreateFromPayload(payload);
+                        EZCollabAdvancedSync.SuppressRemoteObject(created);
                     }
                     finally
                     {
@@ -305,9 +343,11 @@ namespace EZCollabTool
                 case EZMessageType.DestroyObject:
                 {
                     DestroyObjectPayload payload = message.GetPayload<DestroyObjectPayload>();
-                    if (!EZCollabState.guidToObject.TryGetValue(payload.guid, out GameObject go) || go == null)
+                    if (payload == null || !EZCollabState.ShouldApplyObjectSequence(payload.guid, message.sequence) ||
+                        !EZCollabState.guidToObject.TryGetValue(payload.guid, out GameObject go) || go == null)
                         break;
 
+                    EZCollabAdvancedSync.SuppressRemoteObject(go);
                     EZCollabState.isApplyingRemoteChange = true;
                     try
                     {
@@ -330,6 +370,12 @@ namespace EZCollabTool
                     EZCollabEditGuard.ResolvePendingLock(
                         payload.guid,
                         payload.peerId == EZCollabState.localPeerId);
+                    if (payload.peerId != EZCollabState.localPeerId)
+                    {
+                        EZCollabAdvancedSync.DiscardQueuedState(payload.guid);
+                        RemoveFromSelection(payload.guid);
+                    }
+
                     SceneView.RepaintAll();
                     break;
                 }
@@ -356,6 +402,7 @@ namespace EZCollabTool
                     LockPayload payload = message.GetPayload<LockPayload>();
                     pendingLockRequests.Remove(payload.guid);
                     EZCollabEditGuard.ResolvePendingLock(payload.guid, false);
+                    EZCollabAdvancedSync.DiscardQueuedState(payload.guid);
                     RemoveFromSelection(payload.guid);
 
                     break;

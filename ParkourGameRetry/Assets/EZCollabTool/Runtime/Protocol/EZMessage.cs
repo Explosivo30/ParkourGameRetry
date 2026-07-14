@@ -9,6 +9,10 @@ namespace EZCollabTool
     public enum EZMessageType
     {
         SceneSnapshot,
+        SceneSnapshotBegin,
+        SceneSnapshotChunk,
+        SceneSnapshotEnd,
+        RecoveryComplete,
         CreateObject,
         DestroyObject,
         TransformDelta,
@@ -28,11 +32,12 @@ namespace EZCollabTool
     [Serializable]
     public class EZMessage
     {
-        public const int MaxPayloadBytes = 10 * 1024 * 1024;
+        public const int MaxPayloadBytes = 64 * 1024 * 1024;
 
         public EZMessageType type;
         public string senderId;
         public long timestamp;
+        public long sequence;
         public string payload;
 
         public static EZMessage Create(EZMessageType type, string senderId, object payload)
@@ -111,6 +116,7 @@ namespace EZCollabTool
     {
         public string peerId;
         public string peerName;
+        public long lastSequence;
     }
 
     [Serializable]
@@ -121,6 +127,10 @@ namespace EZCollabTool
         public string objectName;
         public ObjectSourceType sourceType;
         public string prefabPath;
+        public string prefabGuid;
+        public string prefabHash;
+        public string undoName;
+        public bool releaseLockAfterApply;
         public PrimitiveType primitiveType;
         public SerializedTransform localTransform;
         public int siblingIndex;
@@ -155,6 +165,7 @@ namespace EZCollabTool
         public string propertyPath;
         public string assetGuid;
         public string assetPath;
+        public string assetHash;
         public long localFileId;
         public string sceneObjectGuid;
         public string componentTypeName;

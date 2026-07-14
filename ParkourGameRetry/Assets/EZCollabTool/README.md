@@ -1,6 +1,6 @@
 # EZCollabTool
 
-Versión: 0.2.0
+Versión: 0.3.0
 
 Unity: 6
 
@@ -12,22 +12,22 @@ EZCollabTool permite que varios Unity Editors trabajen en tiempo real sobre la m
 
 Se sincronizan:
 
-- Movimiento, rotación y escala a 20 Hz mientras se edita.
-- Creación de primitivas, GameObjects vacíos, prefabs y objetos con componentes de Unity.
-- Geometría generada y objetos editables de ProBuilder en el momento de su creación.
-- Borrado de objetos y jerarquías.
-- Locks autoritativos: un objeto bloqueado por otro peer no se puede seleccionar ni mover y aparece gris en la jerarquía.
-- Locks de selección y presencia de peers.
-- Snapshot inicial autoritativo de la escena del host.
+- Movimiento, rotación y escala a 20 Hz, más un estado completo consolidado al terminar la edición.
+- Creación y borrado de primitivas, GameObjects vacíos, prefabs, componentes y objetos genéricos de Unity.
+- ProBuilder después de cada modificación: caras, vértices, topología, UV, submeshes y materiales.
+- Añadir, eliminar y modificar componentes y propiedades serializadas del Inspector, incluidos materiales, luces y colliders.
+- Nombre, estado activo, padre y orden entre hermanos de la jerarquía.
+- Undo/Redo colaborativo: el resultado del Undo o Redo local se publica como una nueva revisión para los demás editores.
+- Locks autoritativos: el objeto bloqueado por otro peer aparece gris, no se puede seleccionar ni mover y se limpia cualquier selección de caras o vértices de ProBuilder.
+- Detección por GUID y hash de assets/prefabs ausentes o con versiones distintas, visible en la ventana y en la consola.
+- Snapshot inicial autoritativo dividido en bloques y recuperación incremental tras una desconexión.
 
-Todavía no se sincronizan:
+Límites actuales:
 
-- Cambios posteriores en propiedades de componentes distintas de Transform (sí se copia su estado al crear el objeto).
-- Renombrado.
-- Reparenting durante una sesión.
-- Assets que no existan en el proyecto de los demás.
-- Interpolación visual de transforms.
-- Undo colaborativo global.
+- El Undo/Redo comparte el estado resultante; no es una transacción distribuida que pueda deshacer simultáneamente acciones de varios usuarios.
+- Los archivos de assets no se transfieren por red. Se avisa si faltan o difieren y el equipo debe sincronizarlos mediante su control de versiones.
+- Los scripts y componentes deben existir en todos los proyectos para poder reconstruirse.
+- No hay autenticación, cifrado ni resolución automática de conflictos fuera de los locks.
 
 ## Requisitos
 
@@ -80,19 +80,28 @@ El protocolo usa TcpListener y TcpClient, no WebSocket:
 payload JSON UTF-8
 ~~~
 
-Cada conexión serializa sus escrituras para impedir que dos mensajes mezclen sus bytes. Mientras un cliente recibe el snapshot, el servidor guarda sus deltas pendientes y los envía después en orden.
+Cada conexión serializa sus escrituras para impedir que dos mensajes mezclen sus bytes. Mientras un cliente recibe el snapshot, el servidor guarda sus deltas pendientes y los envía después. El historial conserva hasta 4096 mensajes o aproximadamente 32 MB de JSON; si la revisión solicitada ya no está, se envía de nuevo un snapshot completo.
 
 Mensajes actuales:
 
-- SceneSnapshot
+- SceneSnapshotBegin, SceneSnapshotChunk y SceneSnapshotEnd
+- RecoveryComplete
 - CreateObject
 - DestroyObject
 - TransformDelta
-- ComponentDelta (reservado)
+- ComponentDelta
 - LockRequest, LockGranted, LockDenied, LockRelease
 - ObjectLocked, ObjectUnlocked
 - PeerJoined, PeerLeft
 - Heartbeat
+
+## Rendimiento en escenas grandes
+
+Durante la edición no se usa `GameObject.Find`, `FindObjectsOfType` ni un recorrido completo de la escena. Se mantiene un índice GUID → GameObject y los cambios llegan mediante `ObjectChangeEvents`. Las creaciones, deltas y recorridos de subjerarquías se procesan en colas con límites por frame.
+
+El recorrido O(N) de una escena grande solo es necesario al iniciar la sesión y al producir o aplicar un snapshot completo. Por tanto, una escena de 10.000 objetos no provoca una búsqueda de 10.000 objetos con cada movimiento, aunque la primera conexión y la serialización de meshes/componentes sí tardarán en proporción al tamaño real de la escena.
+
+Los snapshots se envían en bloques de 64 objetos. Para obtener buen rendimiento todos los editores deben partir de la misma escena y los mismos assets; meshes ProBuilder muy densos generan mensajes JSON mayores que objetos normales.
 
 ## Git
 
@@ -100,7 +109,8 @@ EZCollabTool no ejecuta git add, commit, push ni pull. La sincronización de arc
 
 ## Notas operativas
 
-- Si el host se desconecta, la sesión termina.
-- Un cliente espera un máximo de 20 segundos por el snapshot inicial.
-- Un frame de red puede ocupar como máximo 10 MB.
-- Los prefabs deben existir en la misma ruta en todos los proyectos.
+- Si un cliente pierde momentáneamente al host, realiza hasta cinco intentos de reconexión y solicita las revisiones posteriores a la última aplicada.
+- Si el host termina la sesión definitivamente, los clientes no pueden recuperarla.
+- Un cliente espera un máximo de 120 segundos por la sincronización inicial.
+- Un mensaje de red puede ocupar como máximo 64 MB.
+- Los prefabs se resuelven primero por GUID, se comprueban por hash y deben existir en todos los proyectos.

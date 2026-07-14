@@ -9,6 +9,15 @@ namespace EZCollabTool
 {
     public static class EZCollabObjectSerializer
     {
+        sealed class PendingObjectReference
+        {
+            public Component component;
+            public SerializedObjectReference reference;
+        }
+
+        static readonly List<PendingObjectReference> pendingObjectReferences =
+            new List<PendingObjectReference>();
+
         public static List<SerializedComponent> CaptureComponents(GameObject go)
         {
             List<SerializedComponent> serializedComponents = new List<SerializedComponent>();
@@ -81,10 +90,14 @@ namespace EZCollabTool
         public static void ApplyObjectData(
             GameObject go,
             List<SerializedComponent> serializedComponents,
-            SerializedMesh serializedMesh)
+            SerializedMesh serializedMesh,
+            bool removeMissingComponents = false)
         {
             if (go == null)
                 return;
+
+            if (removeMissingComponents)
+                RemoveMissingComponents(go, serializedComponents);
 
             Dictionary<SerializedComponent, Component> targets = EnsureComponents(go, serializedComponents);
             foreach (KeyValuePair<SerializedComponent, Component> pair in targets)
@@ -117,6 +130,7 @@ namespace EZCollabTool
                     proBuilderMesh.ToMesh();
                     proBuilderMesh.Refresh();
                     EditorUtility.SetDirty(proBuilderMesh);
+                    ResolvePendingObjectReferences();
                     return;
                 }
                 catch (Exception exception)
@@ -126,6 +140,62 @@ namespace EZCollabTool
             }
 
             ApplyGeneratedMesh(go, serializedMesh);
+            ResolvePendingObjectReferences();
+        }
+
+        public static void ResetPendingReferences()
+        {
+            pendingObjectReferences.Clear();
+        }
+
+        public static void ResolvePendingObjectReferences()
+        {
+            for (int i = pendingObjectReferences.Count - 1; i >= 0; i--)
+            {
+                PendingObjectReference pending = pendingObjectReferences[i];
+                if (pending.component == null)
+                {
+                    pendingObjectReferences.RemoveAt(i);
+                    continue;
+                }
+
+                UnityEngine.Object resolved = ResolveReference(pending.reference);
+                if (resolved == null)
+                    continue;
+
+                UnityEditor.SerializedObject serializedObject = new UnityEditor.SerializedObject(pending.component);
+                SerializedProperty property = serializedObject.FindProperty(pending.reference.propertyPath);
+                if (property != null && property.propertyType == SerializedPropertyType.ObjectReference)
+                {
+                    property.objectReferenceValue = resolved;
+                    serializedObject.ApplyModifiedPropertiesWithoutUndo();
+                }
+                pendingObjectReferences.RemoveAt(i);
+            }
+        }
+
+        static void RemoveMissingComponents(GameObject go, List<SerializedComponent> serializedComponents)
+        {
+            Dictionary<Type, int> expectedCounts = new Dictionary<Type, int>();
+            if (serializedComponents != null)
+                foreach (SerializedComponent data in serializedComponents)
+                {
+                    Type type = ResolveType(data.typeName);
+                    if (type != null && typeof(Component).IsAssignableFrom(type) && type != typeof(Transform))
+                        expectedCounts[type] = System.Math.Max(expectedCounts.TryGetValue(type, out int count) ? count : 0, data.occurrenceIndex + 1);
+                }
+
+            Component[] existing = go.GetComponents<Component>();
+            for (int i = existing.Length - 1; i >= 0; i--)
+            {
+                Component component = existing[i];
+                if (component == null || component is Transform) continue;
+                Type type = component.GetType();
+                expectedCounts.TryGetValue(type, out int keepCount);
+                if (go.GetComponents(type).Length <= keepCount) continue;
+                try { UnityEngine.Object.DestroyImmediate(component); }
+                catch (Exception exception) { Debug.LogWarning($"[EZCollab] Could not remove component '{type.FullName}' from '{go.name}': {exception.Message}"); }
+            }
         }
 
         static Dictionary<SerializedComponent, Component> EnsureComponents(
@@ -220,6 +290,7 @@ namespace EZCollabTool
                 if (EditorUtility.IsPersistent(reference))
                 {
                     data.assetPath = AssetDatabase.GetAssetPath(reference);
+                    data.assetHash = EZCollabAssetValidator.GetDependencyHash(data.assetPath);
                     AssetDatabase.TryGetGUIDAndLocalFileIdentifier(
                         reference,
                         out data.assetGuid,
@@ -264,7 +335,15 @@ namespace EZCollabTool
 
                 UnityEngine.Object reference = ResolveReference(data);
                 if (reference == null)
+                {
+                    if (!string.IsNullOrEmpty(data.sceneObjectGuid))
+                    {
+                        pendingObjectReferences.RemoveAll(item => item.component == component && item.reference.propertyPath == data.propertyPath);
+                        pendingObjectReferences.Add(new PendingObjectReference
+                            { component = component, reference = data });
+                    }
                     continue;
+                }
 
                 property.objectReferenceValue = reference;
                 changed = true;
@@ -278,11 +357,13 @@ namespace EZCollabTool
         {
             if (!string.IsNullOrEmpty(data.assetGuid) || !string.IsNullOrEmpty(data.assetPath))
             {
-                string assetPath = !string.IsNullOrEmpty(data.assetGuid)
-                    ? AssetDatabase.GUIDToAssetPath(data.assetGuid)
-                    : data.assetPath;
+                string assetPath = EZCollabAssetValidator.ResolveAndValidate(
+                    data.assetPath,
+                    data.assetGuid,
+                    data.assetHash,
+                    data.propertyPath);
                 if (string.IsNullOrEmpty(assetPath))
-                    assetPath = data.assetPath;
+                    return null;
 
                 UnityEngine.Object[] assets = AssetDatabase.LoadAllAssetsAtPath(assetPath);
                 foreach (UnityEngine.Object asset in assets)

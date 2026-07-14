@@ -21,6 +21,8 @@ namespace EZCollabTool
         public bool active;
         public ObjectSourceType sourceType;
         public string prefabPath;
+        public string prefabGuid;
+        public string prefabHash;
         public PrimitiveType primitiveType;
         public SerializedTransform localTransform;
         public int siblingIndex;
@@ -50,6 +52,7 @@ namespace EZCollabTool
         {
             List<SerializedComponent> components = EZCollabObjectSerializer.CaptureComponents(go);
             string prefabPath = GetPrefabPath(go);
+            EZCollabAssetValidator.DescribeAsset(prefabPath, out string prefabGuid, out string prefabHash);
             ObjectSourceType sourceType;
             PrimitiveType primitiveType = PrimitiveType.Cube;
 
@@ -77,6 +80,8 @@ namespace EZCollabTool
                 objectName = go.name,
                 sourceType = sourceType,
                 prefabPath = prefabPath,
+                prefabGuid = prefabGuid,
+                prefabHash = prefabHash,
                 primitiveType = primitiveType,
                 localTransform = SerializedTransform.FromTransform(go.transform),
                 siblingIndex = go.transform.GetSiblingIndex(),
@@ -102,6 +107,8 @@ namespace EZCollabTool
                 active = go.activeSelf,
                 sourceType = payload.sourceType,
                 prefabPath = payload.prefabPath,
+                prefabGuid = payload.prefabGuid,
+                prefabHash = payload.prefabHash,
                 primitiveType = payload.primitiveType,
                 localTransform = payload.localTransform,
                 siblingIndex = payload.siblingIndex,
@@ -153,6 +160,7 @@ namespace EZCollabTool
             }
             finally
             {
+                EZCollabObjectSerializer.ResolvePendingObjectReferences();
                 EZCollabState.isApplyingRemoteChange = false;
             }
         }
@@ -167,7 +175,14 @@ namespace EZCollabTool
             {
                 if (payload.sourceType == ObjectSourceType.Prefab && !string.IsNullOrEmpty(payload.prefabPath))
                 {
-                    GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(payload.prefabPath);
+                    string prefabPath = EZCollabAssetValidator.ResolveAndValidate(
+                        payload.prefabPath,
+                        payload.prefabGuid,
+                        payload.prefabHash,
+                        $"prefab {payload.objectName}");
+                    GameObject prefab = string.IsNullOrEmpty(prefabPath)
+                        ? null
+                        : AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
                     if (prefab != null)
                         go = PrefabUtility.InstantiatePrefab(prefab) as GameObject;
                 }
@@ -195,10 +210,45 @@ namespace EZCollabTool
             go.transform.SetSiblingIndex(Math.Max(0, payload.siblingIndex));
             RegisterRemoteGuid(go, payload.guid);
             ApplyGameObjectData(go, payload.layer, payload.tag, payload.staticEditorFlags,
-                payload.components, payload.mesh);
+                payload.components, payload.mesh, true);
             go.SetActive(payload.active);
+            EZCollabState.UpdateHierarchyIndex(go);
 
             RegisterTemporaryDescendants(go);
+            return go;
+        }
+
+        public static GameObject ApplyStatePayload(CreateObjectPayload payload, bool registerUndo)
+        {
+            if (payload == null || string.IsNullOrEmpty(payload.guid))
+                return null;
+
+            if (!EZCollabState.guidToObject.TryGetValue(payload.guid, out GameObject go) || go == null)
+                return CreateFromPayload(payload);
+
+            if (registerUndo)
+                Undo.RegisterFullObjectHierarchyUndo(go,
+                    string.IsNullOrEmpty(payload.undoName) ? $"EZCollab update {go.name}" : payload.undoName);
+
+            Transform parent = null;
+            if (!string.IsNullOrEmpty(payload.parentGuid) &&
+                EZCollabState.guidToObject.TryGetValue(payload.parentGuid, out GameObject parentObject) &&
+                parentObject != null)
+            {
+                parent = parentObject.transform;
+            }
+
+            go.transform.SetParent(parent, false);
+            go.name = payload.objectName;
+            go.transform.localPosition = payload.localTransform.GetPosition();
+            go.transform.localRotation = payload.localTransform.GetRotation();
+            go.transform.localScale = payload.localTransform.GetScale();
+            go.transform.SetSiblingIndex(Math.Max(0, payload.siblingIndex));
+            ApplyGameObjectData(go, payload.layer, payload.tag, payload.staticEditorFlags,
+                payload.components, payload.mesh, true);
+            go.SetActive(payload.active);
+            EZCollabState.UpdateHierarchyIndex(go);
+            EditorUtility.SetDirty(go);
             return go;
         }
 
@@ -211,6 +261,8 @@ namespace EZCollabTool
                 objectName = data.name,
                 sourceType = data.sourceType,
                 prefabPath = data.prefabPath,
+                prefabGuid = data.prefabGuid,
+                prefabHash = data.prefabHash,
                 primitiveType = data.primitiveType,
                 localTransform = data.localTransform,
                 siblingIndex = data.siblingIndex,
@@ -243,8 +295,9 @@ namespace EZCollabTool
             go.transform.localRotation = data.localTransform.GetRotation();
             go.transform.localScale = data.localTransform.GetScale();
             go.transform.SetSiblingIndex(Math.Max(0, data.siblingIndex));
-            ApplyGameObjectData(go, data.layer, data.tag, data.staticEditorFlags, data.components, data.mesh);
+            ApplyGameObjectData(go, data.layer, data.tag, data.staticEditorFlags, data.components, data.mesh, true);
             go.SetActive(data.active);
+            EZCollabState.UpdateHierarchyIndex(go);
         }
 
         static void ApplyGameObjectData(
@@ -253,7 +306,8 @@ namespace EZCollabTool
             string tag,
             int staticEditorFlags,
             List<SerializedComponent> components,
-            SerializedMesh mesh)
+            SerializedMesh mesh,
+            bool removeMissingComponents)
         {
             go.layer = Math.Max(0, Math.Min(31, layer));
             if (!string.IsNullOrEmpty(tag))
@@ -269,7 +323,7 @@ namespace EZCollabTool
             }
 
             GameObjectUtility.SetStaticEditorFlags(go, (StaticEditorFlags)staticEditorFlags);
-            EZCollabObjectSerializer.ApplyObjectData(go, components, mesh);
+            EZCollabObjectSerializer.ApplyObjectData(go, components, mesh, removeMissingComponents);
             EditorUtility.SetDirty(go);
         }
 
