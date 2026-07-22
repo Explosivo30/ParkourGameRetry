@@ -1,6 +1,6 @@
 {
   "name": "com.ezcollabtool",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "displayName": "EZCollabTool",
   "description": "Colaboración en tiempo real para Unity Editor mediante TCP directo, sin servicios externos.",
   "unity": "6000.0",

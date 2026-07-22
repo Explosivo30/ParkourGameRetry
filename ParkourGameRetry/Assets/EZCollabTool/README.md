@@ -1,6 +1,6 @@
 # EZCollabTool
 
-Versión: 0.3.0
+Versión: 0.3.1
 
 Unity: 6
 
@@ -18,7 +18,7 @@ Se sincronizan:
 - Añadir, eliminar y modificar componentes y propiedades serializadas del Inspector, incluidos materiales, luces y colliders.
 - Nombre, estado activo, padre y orden entre hermanos de la jerarquía.
 - Undo/Redo colaborativo: el resultado del Undo o Redo local se publica como una nueva revisión para los demás editores.
-- Locks autoritativos: el objeto bloqueado por otro peer aparece gris, no se puede seleccionar ni mover y se limpia cualquier selección de caras o vértices de ProBuilder.
+- Locks autoritativos: los objetos bloqueados por otros peers muestran en la Scene View un fantasma del color estable asignado a su propietario; los locks propios no se colorean. También se marca la jerarquía, se impide seleccionar o mover el objeto y se limpia cualquier selección de caras o vértices de ProBuilder.
 - Detección por GUID y hash de assets/prefabs ausentes o con versiones distintas, visible en la ventana y en la consola.
 - Snapshot inicial autoritativo dividido en bloques y recuperación incremental tras una desconexión.
 

@@ -140,7 +140,7 @@ namespace EZCollabTool
             else
             {
                 foreach (KeyValuePair<string, string> pair in EZCollabState.connectedPeers)
-                    EditorGUILayout.LabelField($"  {pair.Value}");
+                    DrawPeerLabel(pair.Key, pair.Value);
             }
 
             GUILayout.Space(6);
@@ -194,6 +194,16 @@ namespace EZCollabTool
             }
 
             GUILayout.Space(4);
+        }
+
+        static void DrawPeerLabel(string peerId, string displayName)
+        {
+            Rect row = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+            Rect swatch = new Rect(row.x + 2f, row.y + 3f, 10f, 10f);
+            EditorGUI.DrawRect(swatch, EZCollabPeerColors.Get(peerId));
+            EditorGUI.LabelField(
+                new Rect(row.x + 18f, row.y, row.width - 18f, row.height),
+                displayName);
         }
     }
 }

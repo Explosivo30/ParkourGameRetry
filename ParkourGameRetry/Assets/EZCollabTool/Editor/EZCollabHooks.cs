@@ -377,6 +377,7 @@ namespace EZCollabTool
                     }
 
                     SceneView.RepaintAll();
+                    EditorApplication.RepaintHierarchyWindow();
                     break;
                 }
 
@@ -385,6 +386,7 @@ namespace EZCollabTool
                     LockPayload payload = message.GetPayload<LockPayload>();
                     EZCollabState.ReleaseLock(payload.guid);
                     SceneView.RepaintAll();
+                    EditorApplication.RepaintHierarchyWindow();
                     break;
                 }
 
@@ -422,6 +424,7 @@ namespace EZCollabTool
                     EZCollabState.connectedPeers.Remove(payload.peerId);
                     EZCollabState.ReleaseAllLocksForPeer(payload.peerId);
                     SceneView.RepaintAll();
+                    EditorApplication.RepaintHierarchyWindow();
                     break;
                 }
             }

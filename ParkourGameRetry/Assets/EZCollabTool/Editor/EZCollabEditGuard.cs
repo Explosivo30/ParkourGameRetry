@@ -11,7 +11,6 @@ namespace EZCollabTool
             new Dictionary<GameObject, bool>();
         static readonly Dictionary<string, PendingLockState> pendingLocks =
             new Dictionary<string, PendingLockState>();
-        static readonly Color lockedRowColor = new Color(0.35f, 0.35f, 0.35f, 0.45f);
         static bool toolsWereHidden;
 
         sealed class PendingLockState
@@ -174,14 +173,25 @@ namespace EZCollabTool
 
             GameObject go = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
             if (go == null || !EZCollabState.TryGetGuid(go, out string guid) ||
-                !EZCollabState.IsLockedByOther(guid))
+                !EZCollabState.lockedObjects.TryGetValue(guid, out string ownerPeerId) ||
+                ownerPeerId == EZCollabState.localPeerId)
             {
                 return;
             }
 
-            EditorGUI.DrawRect(selectionRect, lockedRowColor);
-            Rect badgeRect = new Rect(selectionRect.xMax - 48f, selectionRect.y, 46f, selectionRect.height);
-            GUI.Label(badgeRect, "LOCK", EditorStyles.centeredGreyMiniLabel);
+            Color peerColor = EZCollabPeerColors.Get(ownerPeerId);
+            EditorGUI.DrawRect(selectionRect, EZCollabPeerColors.WithAlpha(peerColor, 0.22f));
+
+            Rect swatchRect = new Rect(selectionRect.xMax - 51f, selectionRect.y + 3f, 4f,
+                Mathf.Max(1f, selectionRect.height - 6f));
+            EditorGUI.DrawRect(swatchRect, peerColor);
+
+            string ownerName = EZCollabState.GetLockOwnerName(guid) ?? ownerPeerId;
+            Rect badgeRect = new Rect(selectionRect.xMax - 46f, selectionRect.y, 44f, selectionRect.height);
+            GUI.Label(
+                badgeRect,
+                new GUIContent("LOCK", $"Bloqueado por {ownerName}"),
+                EditorStyles.centeredGreyMiniLabel);
         }
 
         static void RestorePickingState(GameObject go)
