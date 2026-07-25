@@ -111,10 +111,12 @@ namespace EZCollabTool
 
                 try
                 {
+                    Dictionary<string, UnityEngine.Object> previousReferences =
+                        CaptureCurrentObjectReferences(component, data.objectReferences);
                     if (!string.IsNullOrEmpty(data.json))
                         EditorJsonUtility.FromJsonOverwrite(data.json, component);
 
-                    ApplyObjectReferences(component, data.objectReferences);
+                    ApplyObjectReferences(component, data.objectReferences, previousReferences);
                 }
                 catch (Exception exception)
                 {
@@ -323,7 +325,30 @@ namespace EZCollabTool
             }
         }
 
-        static void ApplyObjectReferences(Component component, List<SerializedObjectReference> references)
+        static Dictionary<string, UnityEngine.Object> CaptureCurrentObjectReferences(
+            Component component,
+            List<SerializedObjectReference> references)
+        {
+            Dictionary<string, UnityEngine.Object> result =
+                new Dictionary<string, UnityEngine.Object>();
+            if (component == null || references == null)
+                return result;
+
+            UnityEditor.SerializedObject serializedObject = new UnityEditor.SerializedObject(component);
+            foreach (SerializedObjectReference data in references)
+            {
+                SerializedProperty property = serializedObject.FindProperty(data.propertyPath);
+                if (property != null && property.propertyType == SerializedPropertyType.ObjectReference)
+                    result[data.propertyPath] = property.objectReferenceValue;
+            }
+
+            return result;
+        }
+
+        static void ApplyObjectReferences(
+            Component component,
+            List<SerializedObjectReference> references,
+            Dictionary<string, UnityEngine.Object> previousReferences)
         {
             if (references == null || references.Count == 0)
                 return;
@@ -345,6 +370,13 @@ namespace EZCollabTool
                         pendingObjectReferences.RemoveAll(item => item.component == component && item.reference.propertyPath == data.propertyPath);
                         pendingObjectReferences.Add(new PendingObjectReference
                             { component = component, reference = data });
+                    }
+
+                    if (previousReferences != null &&
+                        previousReferences.TryGetValue(data.propertyPath, out UnityEngine.Object previous))
+                    {
+                        property.objectReferenceValue = previous;
+                        changed = true;
                     }
                     continue;
                 }

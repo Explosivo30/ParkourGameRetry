@@ -19,6 +19,7 @@ namespace EZCollabTool
         static readonly Queue<GameObject> pendingCreates = new Queue<GameObject>();
         static readonly HashSet<int> queuedCreateIds = new HashSet<int>();
         static readonly Dictionary<string, double> dirtyObjectDueTimes = new Dictionary<string, double>();
+        static readonly Dictionary<int, double> dirtyMaterialDueTimes = new Dictionary<int, double>();
         static readonly Dictionary<string, string> dirtyUndoNames = new Dictionary<string, string>();
         static readonly Dictionary<int, HashSet<string>> undoGroups = new Dictionary<int, HashSet<string>>();
         static readonly Queue<int> undoGroupOrder = new Queue<int>();
@@ -40,6 +41,7 @@ namespace EZCollabTool
             if (message != null && message.sequence > 0 &&
                 (message.type == EZMessageType.CreateObject || message.type == EZMessageType.DestroyObject ||
                  message.type == EZMessageType.TransformDelta || message.type == EZMessageType.ComponentDelta ||
+                 message.type == EZMessageType.MaterialDelta ||
                  message.type == EZMessageType.SceneSnapshotEnd || message.type == EZMessageType.Info))
             {
                 EZCollabState.ObserveServerSequence(message.sequence);
@@ -61,6 +63,8 @@ namespace EZCollabTool
                         incomingSnapshot = new SceneSnapshot();
                     if (chunk?.objects != null)
                         incomingSnapshot.objects.AddRange(chunk.objects);
+                    if (chunk?.materials != null)
+                        incomingSnapshot.materials.AddRange(chunk.materials);
                     return true;
                 }
 
@@ -89,6 +93,29 @@ namespace EZCollabTool
                     try
                     {
                         EZSceneSerializer.ApplyStatePayload(payload, false);
+                    }
+                    finally
+                    {
+                        EZCollabState.isApplyingRemoteChange = previous;
+                    }
+                    return true;
+                }
+
+                case EZMessageType.MaterialDelta:
+                {
+                    SerializedMaterial material = message.GetPayload<SerializedMaterial>();
+                    if (material == null ||
+                        !EZCollabMaterialSerializer.TryGetMaterialKey(material, out string key) ||
+                        !EZCollabState.ShouldApplyObjectSequence(key, message.sequence))
+                    {
+                        return true;
+                    }
+
+                    bool previous = EZCollabState.isApplyingRemoteChange;
+                    EZCollabState.isApplyingRemoteChange = true;
+                    try
+                    {
+                        EZCollabMaterialSerializer.ApplyMaterial(material);
                     }
                     finally
                     {
@@ -135,6 +162,19 @@ namespace EZCollabTool
             RecordUndoGuid(Undo.GetCurrentGroup(), guid);
         }
 
+        public static void QueueMaterialState(Material material, bool immediate = false)
+        {
+            if (!EZCollabState.inSession || EZCollabState.isApplyingRemoteChange || material == null ||
+                !EditorUtility.IsPersistent(material) ||
+                EZCollabMaterialSerializer.IsMaterialChangeSuppressed(material))
+            {
+                return;
+            }
+
+            dirtyMaterialDueTimes[material.GetInstanceID()] =
+                EditorApplication.timeSinceStartup + (immediate ? 0d : ObjectDeltaDelay);
+        }
+
         static void OnUpdate()
         {
             if (!EZCollabState.inSession)
@@ -149,6 +189,7 @@ namespace EZCollabTool
             CleanupSuppression();
             ProcessHierarchyScans();
             ProcessPendingCreates();
+            ProcessDirtyMaterials();
             ProcessDirtyObjects();
         }
 
@@ -263,6 +304,44 @@ namespace EZCollabTool
             }
         }
 
+        static void ProcessDirtyMaterials()
+        {
+            if (dirtyMaterialDueTimes.Count == 0 || EZCollabSession.isReconnecting)
+                return;
+
+            double now = EditorApplication.timeSinceStartup;
+            int processed = 0;
+            List<int> ready = new List<int>();
+            foreach (KeyValuePair<int, double> pair in dirtyMaterialDueTimes)
+            {
+                if (pair.Value <= now)
+                    ready.Add(pair.Key);
+                if (ready.Count >= MaxDeltasPerFrame)
+                    break;
+            }
+
+            foreach (int instanceId in ready)
+            {
+                Material material = EditorUtility.InstanceIDToObject(instanceId) as Material;
+                if (material == null)
+                {
+                    dirtyMaterialDueTimes.Remove(instanceId);
+                    continue;
+                }
+
+                SerializedMaterial payload = EZCollabMaterialSerializer.CaptureMaterial(material);
+                if (payload != null)
+                    SendLocalMessage(EZMessage.Create(
+                        EZMessageType.MaterialDelta,
+                        EZCollabState.localPeerId,
+                        payload));
+
+                dirtyMaterialDueTimes.Remove(instanceId);
+                if (++processed >= MaxDeltasPerFrame)
+                    break;
+            }
+        }
+
         static void OnObjectChanges(ref ObjectChangeEventStream stream)
         {
             if (!EZCollabState.inSession || EZCollabState.isApplyingRemoteChange)
@@ -287,6 +366,13 @@ namespace EZCollabTool
                             i,
                             out ChangeGameObjectOrComponentPropertiesEventArgs properties);
                         QueueChangedInstance(properties.instanceId);
+                        break;
+
+                    case ObjectChangeKind.ChangeAssetObjectProperties:
+                        stream.GetChangeAssetObjectPropertiesEvent(
+                            i,
+                            out ChangeAssetObjectPropertiesEventArgs assetProperties);
+                        QueueMaterialState(EditorUtility.InstanceIDToObject(assetProperties.instanceId) as Material);
                         break;
 
                     case ObjectChangeKind.ChangeGameObjectParent:
@@ -335,6 +421,12 @@ namespace EZCollabTool
             foreach (UndoPropertyModification modification in modifications)
             {
                 UnityEngine.Object target = modification.currentValue.target;
+                if (target is Material material)
+                {
+                    QueueMaterialState(material);
+                    continue;
+                }
+
                 GameObject go = target as GameObject;
                 if (target is Component component)
                     go = component.gameObject;
@@ -468,6 +560,7 @@ namespace EZCollabTool
             pendingCreates.Clear();
             queuedCreateIds.Clear();
             dirtyObjectDueTimes.Clear();
+            dirtyMaterialDueTimes.Clear();
             dirtyUndoNames.Clear();
             suppressedObjectChanges.Clear();
             incomingSnapshot = null;

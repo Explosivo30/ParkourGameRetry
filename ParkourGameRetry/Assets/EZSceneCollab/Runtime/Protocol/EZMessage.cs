@@ -25,7 +25,8 @@ namespace EZCollabTool
         PeerJoined,
         PeerLeft,
         Heartbeat,
-        Info
+        Info,
+        MaterialDelta
     }
 
     [Serializable]
@@ -138,6 +139,7 @@ namespace EZCollabTool
         public string tag;
         public int staticEditorFlags;
         public List<SerializedComponent> components = new List<SerializedComponent>();
+        public List<SerializedMaterial> materials = new List<SerializedMaterial>();
         public SerializedMesh mesh;
     }
 
@@ -169,6 +171,15 @@ namespace EZCollabTool
         public string sceneObjectGuid;
         public string componentTypeName;
         public int componentOccurrenceIndex;
+    }
+
+    [Serializable]
+    public class SerializedMaterial
+    {
+        public SerializedObjectReference materialReference;
+        public string shaderName;
+        public string json;
+        public List<SerializedObjectReference> objectReferences = new List<SerializedObjectReference>();
     }
 
     [Serializable]

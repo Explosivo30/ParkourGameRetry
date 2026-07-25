@@ -9,6 +9,7 @@ namespace EZCollabTool
     public class SceneSnapshot
     {
         public List<SerializedObject> objects = new List<SerializedObject>();
+        public List<SerializedMaterial> materials = new List<SerializedMaterial>();
     }
 
     [Serializable]
@@ -44,6 +45,7 @@ namespace EZCollabTool
 
             foreach (GameObject root in roots)
                 SerializeHierarchy(root, null, snapshot.objects);
+            snapshot.materials = EZCollabMaterialSerializer.CaptureSceneMaterials(roots);
 
             return snapshot;
         }
@@ -90,6 +92,7 @@ namespace EZCollabTool
                 tag = go.tag,
                 staticEditorFlags = (int)GameObjectUtility.GetStaticEditorFlags(go),
                 components = components,
+                materials = EZCollabMaterialSerializer.CaptureReferencedMaterials(go),
                 mesh = EZCollabObjectSerializer.CaptureGeneratedMesh(go)
             };
         }
@@ -140,6 +143,7 @@ namespace EZCollabTool
 
                 temporaryGuids.Clear();
                 EZCollabState.ClearObjectMappings();
+                EZCollabMaterialSerializer.ApplyMaterials(snapshot.materials);
 
                 foreach (SerializedObject data in snapshot.objects)
                 {
@@ -210,7 +214,7 @@ namespace EZCollabTool
             go.transform.SetSiblingIndex(Math.Max(0, payload.siblingIndex));
             RegisterRemoteGuid(go, payload.guid);
             ApplyGameObjectData(go, payload.layer, payload.tag, payload.staticEditorFlags,
-                payload.components, payload.mesh, true);
+                payload.components, payload.materials, payload.mesh, true);
             go.SetActive(payload.active);
             EZCollabState.UpdateHierarchyIndex(go);
 
@@ -245,7 +249,7 @@ namespace EZCollabTool
             go.transform.localScale = payload.localTransform.GetScale();
             go.transform.SetSiblingIndex(Math.Max(0, payload.siblingIndex));
             ApplyGameObjectData(go, payload.layer, payload.tag, payload.staticEditorFlags,
-                payload.components, payload.mesh, true);
+                payload.components, payload.materials, payload.mesh, true);
             go.SetActive(payload.active);
             EZCollabState.UpdateHierarchyIndex(go);
             EditorUtility.SetDirty(go);
@@ -295,7 +299,8 @@ namespace EZCollabTool
             go.transform.localRotation = data.localTransform.GetRotation();
             go.transform.localScale = data.localTransform.GetScale();
             go.transform.SetSiblingIndex(Math.Max(0, data.siblingIndex));
-            ApplyGameObjectData(go, data.layer, data.tag, data.staticEditorFlags, data.components, data.mesh, true);
+            ApplyGameObjectData(go, data.layer, data.tag, data.staticEditorFlags,
+                data.components, null, data.mesh, true);
             go.SetActive(data.active);
             EZCollabState.UpdateHierarchyIndex(go);
         }
@@ -306,6 +311,7 @@ namespace EZCollabTool
             string tag,
             int staticEditorFlags,
             List<SerializedComponent> components,
+            List<SerializedMaterial> materials,
             SerializedMesh mesh,
             bool removeMissingComponents)
         {
@@ -323,6 +329,7 @@ namespace EZCollabTool
             }
 
             GameObjectUtility.SetStaticEditorFlags(go, (StaticEditorFlags)staticEditorFlags);
+            EZCollabMaterialSerializer.ApplyMaterials(materials);
             EZCollabObjectSerializer.ApplyObjectData(go, components, mesh, removeMissingComponents);
             EditorUtility.SetDirty(go);
         }

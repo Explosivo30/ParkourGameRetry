@@ -22,6 +22,11 @@ All notable changes to EZ Scene Collab are documented here.
 - Visible menu and window names now use EZ Scene Collab.
 - Package display version updated to 0.5.0.
 
+### Fixed
+
+- Material color and serialized-property edits now synchronize between editors.
+- Missing or unsupported remote material/shader references no longer replace a valid local material with a broken pink one.
+
 ### Known limitations
 
 - Windows is the only tested operating system.

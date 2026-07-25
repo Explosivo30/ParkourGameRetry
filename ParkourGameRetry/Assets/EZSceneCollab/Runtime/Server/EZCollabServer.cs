@@ -510,6 +510,19 @@ namespace EZCollabTool
                     break;
                 }
 
+                case EZMessageType.MaterialDelta:
+                {
+                    SerializedMaterial payload = message.GetPayload<SerializedMaterial>();
+                    if (payload == null ||
+                        !EZCollabMaterialSerializer.TryGetMaterialKey(payload, out _))
+                        break;
+
+                    StampAndRemember(message);
+                    await BroadcastExcept(message, fromPeerId, token);
+                    incomingMessages.Enqueue(message);
+                    break;
+                }
+
                 case EZMessageType.TransformDelta:
                 {
                     TransformPayload payload = message.GetPayload<TransformPayload>();
@@ -606,6 +619,9 @@ namespace EZCollabTool
                 SceneSnapshot chunk = new SceneSnapshot();
                 int count = Math.Min(SnapshotChunkSize, snapshot.objects.Count - offset);
                 chunk.objects.AddRange(snapshot.objects.GetRange(offset, count));
+                if (offset == 0 && snapshot.materials != null)
+                    chunk.materials.AddRange(snapshot.materials);
+
                 EZMessage message = EZMessage.Create(
                     EZMessageType.SceneSnapshotChunk,
                     EZCollabState.localPeerId,
@@ -694,7 +710,8 @@ namespace EZCollabTool
         static bool IsRecoverableStateMessage(EZMessageType type)
         {
             return type == EZMessageType.CreateObject || type == EZMessageType.DestroyObject ||
-                   type == EZMessageType.TransformDelta || type == EZMessageType.ComponentDelta;
+                   type == EZMessageType.TransformDelta || type == EZMessageType.ComponentDelta ||
+                   type == EZMessageType.MaterialDelta;
         }
 
         async Task SendSessionPeers(ConnectedClient connectedClient, CancellationToken token)

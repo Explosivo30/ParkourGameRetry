@@ -102,7 +102,7 @@ Después de cinco intentos fallidos se detiene la sesión del cliente. Abre de n
 
 ProBuilder se detecta automáticamente. Con una instalación compatible de ProBuilder 6.x, la integración puede activarse o desactivarse antes de la sesión.
 
-La integración escucha las ediciones terminadas y envía el estado del componente ProBuilder junto con la mesh Unity generada: posiciones, normales, tangentes, colores, canales UV 0–3, topología de submeshes e índices. Los materiales viajan como referencias a assets y deben existir con GUID coincidentes en todos los ordenadores.
+La integración escucha las ediciones terminadas y envía el estado del componente ProBuilder junto con la mesh Unity generada: posiciones, normales, tangentes, colores, canales UV 0–3, topología de submeshes e índices. Los assets de material deben seguir existiendo con el mismo GUID en todos los ordenadores. Se sincronizan sus propiedades serializadas —incluidos colores, texturas, shader cuando esté disponible, keywords y ajustes de renderizado—, pero no se transfieren los archivos del asset.
 
 Sin ProBuilder, EZ Scene Collab se importa y funciona. Una mesh ProBuilder generada recibida puede visualizarse como mesh normal de Unity, pero no podrá editarse con las herramientas de ProBuilder en ese ordenador.
 

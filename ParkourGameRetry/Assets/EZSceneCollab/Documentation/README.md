@@ -102,7 +102,7 @@ After five failed attempts, the client session stops. Reopen the window and join
 
 ProBuilder is detected automatically. With a compatible ProBuilder 6.x installation, the integration can be enabled or disabled before the session.
 
-The integration observes completed ProBuilder mesh edits and sends ProBuilder component state plus the generated Unity mesh: vertex positions, normals, tangents, colors, UV channels 0–3, submesh topology, and indices. Materials are carried as component asset references and therefore must exist with matching GUIDs on all computers.
+The integration observes completed ProBuilder mesh edits and sends ProBuilder component state plus the generated Unity mesh: vertex positions, normals, tangents, colors, UV channels 0–3, submesh topology, and indices. Material assets must still exist with matching GUIDs on all computers. Their serialized properties—including colors, textures, shader selection when available, keywords, and render settings—are synchronized; the asset files themselves are not transferred.
 
 Without ProBuilder, EZ Scene Collab still imports and runs. A received generated ProBuilder mesh can appear as a regular Unity mesh, but it is not editable with ProBuilder tools on that computer.
 
