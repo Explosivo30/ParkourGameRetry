@@ -2,7 +2,7 @@
 
 EZ Scene Collab utiliza una conexión TCP directa. El host escucha en todas las interfaces de red disponibles mediante el puerto seleccionado; los clientes se conectan a una dirección alcanzable del host. El puerto predeterminado es `9876`.
 
-Para equipos que trabajan desde casas distintas se recomienda una VPN privada. Abrir puertos públicos es la opción menos sencilla y menos segura en la versión 0.5.0.
+Para equipos que trabajan desde casas distintas se recomienda una VPN privada. Abrir puertos públicos es la opción menos sencilla y menos segura en la versión 1.0.0.
 
 ## Preparación común
 
@@ -85,7 +85,7 @@ No publiques el ID y la contraseña de la red Hamachi. Expulsa miembros o elimin
 
 ## Abrir puertos públicos — avanzado y no recomendado
 
-La versión 0.5.0 no tiene autenticación ni cifrado. Redirigir su puerto a Internet expone el listener a cualquiera que pueda alcanzarlo. Utiliza una VPN privada siempre que sea posible.
+La versión 1.0.0 no tiene autenticación ni cifrado. Redirigir su puerto a Internet expone el listener a cualquiera que pueda alcanzarlo. Utiliza una VPN privada siempre que sea posible.
 
 Si aceptas el riesgo:
 

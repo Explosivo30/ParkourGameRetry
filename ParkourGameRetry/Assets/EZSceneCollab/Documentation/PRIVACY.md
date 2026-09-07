@@ -1,6 +1,6 @@
 # Privacy and network data
 
-EZ Scene Collab 0.5.0 does not include accounts, advertising, analytics, telemetry, or a cloud service. It does not intentionally send project data to the publisher.
+EZ Scene Collab 1.0.0 does not include accounts, advertising, analytics, telemetry, or a cloud service. It does not intentionally send project data to the publisher.
 
 During a session, participating Unity Editors exchange peer display names, network addresses, object and component state, hierarchy information, generated mesh data, and asset identifiers, paths, and dependency hashes. Asset files themselves are not transferred.
 

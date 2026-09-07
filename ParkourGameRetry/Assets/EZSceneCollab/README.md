@@ -1,4 +1,4 @@
-# EZ Scene Collab 0.5.0
+# EZ Scene Collab 1.0.0
 
 Collaborative scene editing between Unity Editors over a direct TCP connection. English is the default language for the UI and documentation. The core works without ProBuilder; compatible ProBuilder 6.x support is detected automatically when available.
 
@@ -19,4 +19,4 @@ Open the tool from `Window > EZ Scene Collab`.
 
 The included demo is located at `Samples/Demo/Scenes/EZSceneCollab_Demo.unity`.
 
-> Security: EZ Scene Collab 0.5.0 uses unencrypted TCP without built-in authentication. Use it only with trusted collaborators on a trusted LAN or private VPN.
+> Security: EZ Scene Collab 1.0.0 uses unencrypted TCP without built-in authentication. Use it only with trusted collaborators on a trusted LAN or private VPN.

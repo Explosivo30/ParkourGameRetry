@@ -44,7 +44,7 @@ El snapshot del host es autoritativo y reconcilia la escena activa del cliente.
 - No te unas desde una escena sin guardar o diferente.
 - Si usaste una escena incorrecta, detén la sesión y restaura mediante control de versiones.
 
-La versión 0.5.0 todavía no rechaza automáticamente un nombre de escena o protocolo diferente.
+La versión 1.0.0 todavía no rechaza automáticamente un nombre de escena o protocolo diferente.
 
 ## Se puede editar un objeto bloqueado
 

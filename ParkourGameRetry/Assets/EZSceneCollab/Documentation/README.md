@@ -1,8 +1,8 @@
-# EZ Scene Collab 0.5.0 — English manual
+# EZ Scene Collab 1.0.0 — English manual
 
 EZ Scene Collab lets trusted teammates edit the active Unity scene together from separate Unity Editors. One Editor hosts the session and remains authoritative; the others connect as clients over a LAN or private VPN. Play Mode is not required.
 
-> Security: version 0.5.0 uses plain TCP without built-in authentication or encryption. Use only with trusted collaborators on a trusted LAN or private VPN.
+> Security: version 1.0.0 uses plain TCP without built-in authentication or encryption. Use only with trusted collaborators on a trusted LAN or private VPN.
 
 ## Verified requirements
 

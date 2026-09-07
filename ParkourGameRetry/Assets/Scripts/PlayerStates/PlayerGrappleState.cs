@@ -18,6 +18,7 @@ public class PlayerGrappleState : PlayerBaseState
     private float travelSpeed;
     private float previousDistance;
     private float blockedTimer;
+    private float enterTime;
     private bool exitedByJump;
     private bool reachedAnchor;
 
@@ -37,6 +38,7 @@ public class PlayerGrappleState : PlayerBaseState
         travelSpeed = Mathf.Max(entrySpeed, stateMachine.GrappleSpeed);
         previousDistance = Vector3.Distance(stateMachine.transform.position, stateMachine.GrappleTarget);
         blockedTimer = 0f;
+        enterTime = Time.time;
         exitedByJump = false;
         reachedAnchor = false;
         stateMachine.ResetVerticalVelocity();
@@ -51,8 +53,14 @@ public class PlayerGrappleState : PlayerBaseState
         // Recalcular dirección cada frame (por si el jugador gira ligeramente)
         travelDirection = (stateMachine.GrappleTarget - stateMachine.transform.position).normalized;
 
-        // ---- Movimiento hacia el punto de enganche ----
-        Vector3 moveVelocity = travelDirection * travelSpeed;
+        // ---- Movimiento hacia el punto de enganche con tensión elástica ----
+        // La velocidad sube gradualmente durante los primeros frames para
+        // simular la tensión del cable estirándose antes de tirar fuerte.
+        float rampUpTime = 0.3f;
+        float rampFactor = Mathf.Clamp01(blockedTimer > 0f ? 1f : (Time.time - enterTime) / rampUpTime);
+        float currentTravelSpeed = Mathf.Lerp(entrySpeed, travelSpeed, rampFactor);
+
+        Vector3 moveVelocity = travelDirection * currentTravelSpeed;
         stateMachine.CurrentHorizontalVelocity = Vector3.ProjectOnPlane(moveVelocity, Vector3.up);
         stateMachine.CC.Move(moveVelocity * deltaTime);
 
@@ -96,7 +104,7 @@ public class PlayerGrappleState : PlayerBaseState
         {
             stateMachine.ClearJumpInputFrame();
 
-            // Conservar la velocidad actual como inercia + un salto vertical
+            // Conservar la velocidad actual como inercia
             Vector3 exitDirection = Vector3.ProjectOnPlane(travelDirection, Vector3.up).normalized;
             if (exitDirection.sqrMagnitude < 0.01f)
                 exitDirection = stateMachine.transform.forward;
@@ -107,7 +115,12 @@ public class PlayerGrappleState : PlayerBaseState
                 0f
             );
             stateMachine.CurrentHorizontalVelocity = exitDirection * exitSpeed;
-            stateMachine.ExecuteJump();
+
+            // Impulso vertical mejorado: salto normal + bonus proporcional
+            // a la componente vertical del cable para encadenar con parkour
+            float cableUpComponent = Mathf.Max(0f, travelDirection.y * travelSpeed * 0.35f);
+            float grappleCancelUpForce = stateMachine.JumpForce + cableUpComponent;
+            stateMachine.ExecuteJump(grappleCancelUpForce);
 
             exitedByJump = true;
             stateMachine.SwitchState(typeof(PlayerIdleState));

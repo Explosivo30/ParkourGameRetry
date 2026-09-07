@@ -8,8 +8,8 @@ using UnityEngine;
 public class PlayerIdleState : PlayerBaseState
 {
     // Track para detectar aterrizajes (landing roll / hard landing)
-    private bool _wasGroundedLastFrame = true;
-    private float _lastVerticalSpeed;
+    private bool wasGroundedLastFrame = true;
+    private float lastVerticalSpeed;
 
     public PlayerIdleState(PlayerStateMachine stateMachine) : base(stateMachine)
     {
@@ -39,14 +39,11 @@ public class PlayerIdleState : PlayerBaseState
         // ---- COYOTE TIME ----
         stateMachine.TickCoyoteTime(Time.deltaTime);
 
-        // ---- MOMENTUM SYSTEM ----
-        // (Movido a PlayerStateMachine.LateUpdate para que no se atasque)
-
         // ---- GRAVEDAD ----
         stateMachine.ApplyGravity();
 
         // ---- MOVIMIENTO HORIZONTAL ----
-        stateMachine.PlayerHorizontalMovement(stateMachine.GetWorldMovementDirection(stateMachine.GetInput()));
+        stateMachine.PlayerHorizontalMovement(stateMachine.GetWorldMovementDirection(stateMachine.GetInput()), deltaTime);
 
         // Leer el estado de crouch directamente del InputReader para fiabilidad
         bool crouchHeld = stateMachine.Controls != null && stateMachine.Controls.CrouchHeld;
@@ -57,9 +54,9 @@ public class PlayerIdleState : PlayerBaseState
 
         // ---- DETECCIÓN DE ATERRIZAJE ----
         // Comprobar si acabamos de aterrizar de una caída alta
-        if (stateMachine.Grounded && !_wasGroundedLastFrame)
+        if (stateMachine.Grounded && !wasGroundedLastFrame)
         {
-            if (_lastVerticalSpeed > stateMachine.RollMinFallSpeed)
+            if (lastVerticalSpeed > stateMachine.RollMinFallSpeed)
             {
                 // Caída alta detectada
                 if (stateMachine.LandingRollInputBuffered)
@@ -67,8 +64,8 @@ public class PlayerIdleState : PlayerBaseState
                     // ---- LANDING ROLL ----
                     // El jugador pulsó crouch al aterrizar → recompensa con roll
                     stateMachine.SwitchState(typeof(PlayerLandingRollState));
-                    _wasGroundedLastFrame = stateMachine.Grounded;
-                    _lastVerticalSpeed = stateMachine.GetVerticalSpeed();
+                    wasGroundedLastFrame = stateMachine.Grounded;
+                    lastVerticalSpeed = stateMachine.GetVerticalSpeed();
                     return;
                 }
                 else
@@ -88,13 +85,29 @@ public class PlayerIdleState : PlayerBaseState
         //  PRIORIDADES DE TRANSICIÓN (ordenadas por importancia)
         // =====================================================================
 
+        // Mantener espacio prioriza la subida frontal sobre el wall-run lateral.
+        if (!stateMachine.Grounded && stateMachine.JumpHeld && stateMachine.CanLedgeGrab())
+        {
+            stateMachine.SwitchState(typeof(PlayerLedgeGrabState));
+            wasGroundedLastFrame = false;
+            lastVerticalSpeed = 0f;
+            return;
+        }
+        if (stateMachine.CanWallClimb())
+        {
+            stateMachine.SwitchState(typeof(PlayerWallClimbState));
+            wasGroundedLastFrame = false;
+            lastVerticalSpeed = 0f;
+            return;
+        }
+
         // ---- PRIORIDAD 1: VAULT ----
         if (wantsToJump && stateMachine.CanVault())
         {
             stateMachine.JumpBufferCounter = 0f;
             stateMachine.SwitchState(typeof(PlayerVaultState));
-            _wasGroundedLastFrame = stateMachine.Grounded;
-            _lastVerticalSpeed = stateMachine.GetVerticalSpeed();
+            wasGroundedLastFrame = stateMachine.Grounded;
+            lastVerticalSpeed = stateMachine.GetVerticalSpeed();
             return;
         }
 
@@ -102,8 +115,8 @@ public class PlayerIdleState : PlayerBaseState
         if (!stateMachine.Grounded && stateMachine.CanWallRun())
         {
             stateMachine.SwitchState(typeof(PlayerWallRunState));
-            _wasGroundedLastFrame = stateMachine.Grounded;
-            _lastVerticalSpeed = stateMachine.GetVerticalSpeed();
+            wasGroundedLastFrame = stateMachine.Grounded;
+            lastVerticalSpeed = stateMachine.GetVerticalSpeed();
             return;
         }
 
@@ -112,33 +125,30 @@ public class PlayerIdleState : PlayerBaseState
         if (!stateMachine.Grounded && stateMachine.CanLedgeGrab())
         {
             stateMachine.SwitchState(typeof(PlayerLedgeGrabState));
-            _wasGroundedLastFrame = stateMachine.Grounded;
-            _lastVerticalSpeed = stateMachine.GetVerticalSpeed();
+            wasGroundedLastFrame = stateMachine.Grounded;
+            lastVerticalSpeed = stateMachine.GetVerticalSpeed();
             return;
         }
 
         // ---- PRIORIDAD 4: SLIDE ----
-        // Solo el flanco de pulsación inicia el slide. Mantener crouch no
-        // puede crear una cadena infinita de reentradas.
         if (stateMachine.Grounded && crouchPressed)
         {
             float currentSpeed = stateMachine.CurrentHorizontalVelocity.magnitude;
             if (currentSpeed >= stateMachine.SlideMinSpeed)
             {
                 stateMachine.SwitchState(typeof(PlayerSlideState));
-                _wasGroundedLastFrame = stateMachine.Grounded;
-                _lastVerticalSpeed = stateMachine.GetVerticalSpeed();
+                wasGroundedLastFrame = stateMachine.Grounded;
+                lastVerticalSpeed = stateMachine.GetVerticalSpeed();
                 return;
             }
         }
 
         // ---- PRIORIDAD 5: DASH ----
-        // Solo una pulsación nueva puede iniciar dash.
         if (!crouchHeld && sprintPressed && stateMachine.CanDash())
         {
             stateMachine.SwitchState(typeof(PlayerDashState));
-            _wasGroundedLastFrame = stateMachine.Grounded;
-            _lastVerticalSpeed = stateMachine.GetVerticalSpeed();
+            wasGroundedLastFrame = stateMachine.Grounded;
+            lastVerticalSpeed = stateMachine.GetVerticalSpeed();
             return;
         }
 
@@ -154,20 +164,14 @@ public class PlayerIdleState : PlayerBaseState
         stateMachine.ClearJumpInputFrame();
 
         // ---- Track estado del frame para detección de aterrizaje ----
-        _wasGroundedLastFrame = stateMachine.Grounded;
-        _lastVerticalSpeed = stateMachine.GetVerticalSpeed();
+        wasGroundedLastFrame = stateMachine.Grounded;
+        lastVerticalSpeed = stateMachine.GetVerticalSpeed();
     }
 
-    // =====================================================================
-    //  FIXED TICK — No se usa en este estado
-    // =====================================================================
     public override void FixedTick(float fixedDeltaTime)
     {
     }
 
-    // =====================================================================
-    //  EXIT — Se desuscribe de los eventos al salir del estado
-    // =====================================================================
     public override void Exit()
     {
         stateMachine.UnsubscribeInputJump();

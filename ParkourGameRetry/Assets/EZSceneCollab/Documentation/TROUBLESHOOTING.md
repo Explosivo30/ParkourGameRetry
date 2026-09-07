@@ -44,7 +44,7 @@ The host snapshot is authoritative and reconciles the client's active scene.
 - Do not join from an unrelated or unsaved scene.
 - Stop immediately and restore from version control if the wrong scene was used.
 
-Version 0.5.0 does not yet perform an automatic scene-name or protocol-version rejection.
+Version 1.0.0 does not yet perform an automatic scene-name or protocol-version rejection.
 
 ## Locked object can still be edited
 

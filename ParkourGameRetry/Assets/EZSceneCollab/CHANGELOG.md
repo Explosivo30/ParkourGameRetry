@@ -2,6 +2,23 @@
 
 All notable changes to EZ Scene Collab are documented here.
 
+## [1.0.0] - 2026-08-21
+
+### Added
+
+- First stable release prepared for distribution on itch.io.
+- Installable Unity package with the complete English and Spanish offline documentation and demo content.
+
+### Changed
+
+- Package and documentation version updated to 1.0.0.
+- Release documentation now describes the current material-property synchronization and safe shader fallback behavior.
+
+### Notes
+
+- This release does not expand the declared compatibility: Windows and Unity 6000.0.58f2 remain the verified environment.
+- Networking remains direct, unencrypted TCP intended for trusted LANs or private VPNs.
+
 ## [0.5.0] - 2026-07-22
 
 ### Added

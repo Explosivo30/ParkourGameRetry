@@ -2,7 +2,7 @@
 
 EZ Scene Collab uses a direct TCP connection. The host listens on all available network interfaces at the selected port; clients connect to one reachable host address. Port `9876` is the default.
 
-A private VPN is recommended for teams working from different homes. Public port forwarding is the least beginner-friendly and least secure option in version 0.5.0.
+A private VPN is recommended for teams working from different homes. Public port forwarding is the least beginner-friendly and least secure option in version 1.0.0.
 
 ## Common preparation
 
@@ -85,7 +85,7 @@ Do not publish the Hamachi network ID and password. Remove members or delete the
 
 ## Public port forwarding — advanced and not recommended
 
-Version 0.5.0 has no authentication or encryption. Forwarding its port to the Internet exposes the listener to anyone who can reach it. Use a private VPN instead whenever possible.
+Version 1.0.0 has no authentication or encryption. Forwarding its port to the Internet exposes the listener to anyone who can reach it. Use a private VPN instead whenever possible.
 
 If you accept the risk:
 

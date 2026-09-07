@@ -10,6 +10,7 @@ public class InputReader : MonoBehaviour,InputSystem_Actions.IPlayerActions
     public Vector2 MovementValue { get; private set; }
     public Vector2 LookValue { get; private set; }
     public bool LookComesFromPointer { get; private set; }
+    public bool JumpHeld { get; private set; }
 
     public event Action OnJumpStarted;   
     public event Action OnJumpCanceled;
@@ -51,6 +52,7 @@ public class InputReader : MonoBehaviour,InputSystem_Actions.IPlayerActions
         controls?.Player.Disable();
         MovementValue = Vector2.zero;
         LookValue = Vector2.zero;
+        JumpHeld = false;
         CrouchHeld = false;
         CrouchPressedThisFrame = false;
         LastCrouchPressedTime = -999f;
@@ -102,8 +104,16 @@ public class InputReader : MonoBehaviour,InputSystem_Actions.IPlayerActions
 
     public void OnJump(InputAction.CallbackContext context)
     {
-        if (context.started) OnJumpStarted?.Invoke();
-        if (context.canceled) OnJumpCanceled?.Invoke();
+        if (context.started)
+        {
+            JumpHeld = true;
+            OnJumpStarted?.Invoke();
+        }
+        if (context.canceled)
+        {
+            JumpHeld = false;
+            OnJumpCanceled?.Invoke();
+        }
     }
 
     public void OnLook(InputAction.CallbackContext context)

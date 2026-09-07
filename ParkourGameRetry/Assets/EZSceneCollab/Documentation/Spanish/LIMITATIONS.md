@@ -1,6 +1,6 @@
 # Limitaciones exactas
 
-Este documento describe EZ Scene Collab 0.5.0 tal como existe actualmente. Forma parte de la especificación del producto, no de una lista de funciones futuras.
+Este documento describe EZ Scene Collab 1.0.0 tal como existe actualmente. Forma parte de la especificación del producto, no de una lista de funciones futuras.
 
 ## Plataforma y versiones
 
@@ -9,7 +9,7 @@ Este documento describe EZ Scene Collab 0.5.0 tal como existe actualmente. Forma
 - El proyecto de desarrollo utiliza URP 17.0.4. Siguen pendientes proyectos limpios Built-in y HDRP.
 - ProBuilder 6.0.9 es la versión verificada para la integración opcional.
 - macOS, Linux, Unity 6.5+, otras versiones de ProBuilder y las pruebas entre dos ordenadores físicos todavía no se declaran compatibles.
-- Host y clientes deben usar manualmente la misma versión de EZ Scene Collab. La versión 0.5.0 todavía no rechaza automáticamente un protocolo de versión distinta.
+- Host y clientes deben usar manualmente la misma versión de EZ Scene Collab. La versión 1.0.0 todavía no rechaza automáticamente un protocolo de versión distinta.
 
 ## TCP directo y usuarios de confianza
 

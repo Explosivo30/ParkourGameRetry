@@ -2,13 +2,6 @@ using UnityEngine;
 
 /// <summary>
 /// Estado de Dash: impulso rápido y corto en la dirección del input (o forward si no hay input).
-/// 
-/// ENTRADA: Se activa al pulsar sprint si el cooldown ha pasado.
-///          Puede usarse en suelo o en el aire (Air Dash).
-///
-/// DURANTE: El jugador se mueve a DashForce de velocidad durante DashDuration segundos.
-///
-/// SALIDA:  Cuando el timer expira. La velocidad se conserva para mantener el momentum.
 /// </summary>
 public class PlayerDashState : PlayerBaseState
 {
@@ -20,13 +13,11 @@ public class PlayerDashState : PlayerBaseState
 
     public override void Enter()
     {
-        // Registrar acción de parkour para el sistema de momentum
         stateMachine.RegisterParkourAction(ParkourActionType.Dash);
         stateMachine.NotifyDashStarted();
 
         dashTimer = 0f;
 
-        // Dirección del dash: hacia donde mira el input, o forward si no hay input
         Vector2 input = stateMachine.GetInput();
         if (input.sqrMagnitude > 0.1f)
         {
@@ -54,23 +45,15 @@ public class PlayerDashState : PlayerBaseState
 
     public override void Tick(float deltaTime)
     {
-        // ---- Control de cámara ----
         stateMachine.PlayerLook();
-
-        // ---- Timer ----
         dashTimer += deltaTime;
-
         stateMachine.GroundDetection();
-
-        // ---- Gravedad (se sigue aplicando para que el dash no flote) ----
         stateMachine.ApplyGravity();
 
-        // ---- Movimiento del dash ----
         Vector3 dashVelocity = dashDirection * dashSpeed;
         stateMachine.CurrentHorizontalVelocity = dashVelocity;
         stateMachine.CC.Move(dashVelocity * deltaTime);
 
-        // ---- Salida cuando se acaba la duración ----
         if (dashTimer >= stateMachine.DashDuration)
         {
             stateMachine.SwitchState(typeof(PlayerIdleState));
@@ -82,7 +65,5 @@ public class PlayerDashState : PlayerBaseState
 
     public override void Exit()
     {
-        // La velocidad se conserva (no reseteamos _currentHorizontalVelocity)
-        // para que el jugador salga del dash con todo el momentum
     }
 }

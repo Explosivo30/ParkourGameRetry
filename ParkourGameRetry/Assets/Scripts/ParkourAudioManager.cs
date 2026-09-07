@@ -4,7 +4,6 @@ using UnityEngine;
 /// Gestiona todos los efectos de audio del parkour:
 /// Sonido de viento progresivo, pisadas dinámicas, grunts de esfuerzo,
 /// y feedback sonoro al encadenar movimientos.
-/// Colocar en el GameObject del jugador.
 /// </summary>
 public class ParkourAudioManager : MonoBehaviour
 {
@@ -12,56 +11,43 @@ public class ParkourAudioManager : MonoBehaviour
     [SerializeField] PlayerStateMachine playerSM;
     [SerializeField] bool createProceduralFallbacks = true;
 
-    // =====================================================================
-    //  VIENTO — Sonido que sube con la velocidad
-    // =====================================================================
     [Header("Viento")]
-    [SerializeField] AudioSource windSource;              // AudioSource dedicado al loop de viento
-    [SerializeField] AudioClip windLoop;                   // Clip de viento en loop
-    [SerializeField] float _windMinSpeed = 5f;             // Velocidad a la que empieza a sonar
-    [SerializeField] float _windMaxSpeed = 25f;            // Velocidad a la que suena al máximo
-    [SerializeField] float _windMaxVolume = 0.6f;          // Volumen máximo del viento
-    [SerializeField] float _windMaxPitch = 1.5f;           // Pitch máximo del viento
-    [SerializeField] float _windLerpSpeed = 3f;            // Suavizado del cambio
+    [SerializeField] AudioSource windSource;
+    [SerializeField] AudioClip windLoop;
+    [SerializeField] float windMinSpeed = 5f;
+    [SerializeField] float windMaxSpeed = 25f;
+    [SerializeField] float windMaxVolume = 0.6f;
+    [SerializeField] float windMaxPitch = 1.5f;
+    [SerializeField] float windLerpSpeed = 3f;
 
-    // =====================================================================
-    //  PISADAS — Ritmo que se acelera con la velocidad
-    // =====================================================================
     [Header("Pisadas")]
-    [SerializeField] AudioSource footstepSource;           // AudioSource para pisadas
-    [SerializeField] AudioClip[] footstepClips;            // Array de clips de pisadas (variación)
-    [SerializeField] float _footstepBaseInterval = 0.5f;   // Intervalo base entre pisadas (velocidad baja)
-    [SerializeField] float _footstepMinInterval = 0.2f;    // Intervalo mínimo (velocidad máxima)
-    [SerializeField] float _footstepSpeedRef = 15f;        // Velocidad de referencia para intervalo mínimo
-    [SerializeField] float _footstepMinSpeed = 1f;         // Velocidad mínima para que suenen pisadas
+    [SerializeField] AudioSource footstepSource;
+    [SerializeField] AudioClip[] footstepClips;
+    [SerializeField] float footstepBaseInterval = 0.5f;
+    [SerializeField] float footstepMinInterval = 0.2f;
+    [SerializeField] float footstepSpeedRef = 15f;
+    [SerializeField] float footstepMinSpeed = 1f;
 
-    // =====================================================================
-    //  GRUNTS — Sonidos de esfuerzo al hacer parkour
-    // =====================================================================
     [Header("Esfuerzo / Grunts")]
-    [SerializeField] AudioSource gruntSource;              // AudioSource para grunts
-    [SerializeField] AudioClip[] vaultGrunts;              // Grunts al hacer vault
-    [SerializeField] AudioClip[] jumpGrunts;               // Grunts al saltar
-    [SerializeField] AudioClip[] wallRunGrunts;            // Grunts al iniciar wall-run
-    [SerializeField] AudioClip[] landingGrunts;            // Grunts al aterrizar fuerte
-    [SerializeField] AudioClip[] slideGrunts;              // Grunts al deslizar
+    [SerializeField] AudioSource gruntSource;
+    [SerializeField] AudioClip[] vaultGrunts;
+    [SerializeField] AudioClip[] jumpGrunts;
+    [SerializeField] AudioClip[] wallRunGrunts;
+    [SerializeField] AudioClip[] landingGrunts;
+    [SerializeField] AudioClip[] slideGrunts;
 
-    // =====================================================================
-    //  FEEDBACK DE COMBO — Sonido que sube de tono al encadenar parkour
-    // =====================================================================
     [Header("Feedback de Combo")]
-    [SerializeField] AudioSource comboSource;              // AudioSource para feedback de combo
-    [SerializeField] AudioClip comboChainSound;            // Sonido al encadenar movimientos
-    [SerializeField] float _comboPitchBase = 0.8f;         // Pitch base del combo
-    [SerializeField] float _comboPitchPerChain = 0.1f;     // Cuánto sube el pitch por cada chain
-    [SerializeField] float _comboMaxPitch = 1.5f;          // Pitch máximo
+    [SerializeField] AudioSource comboSource;
+    [SerializeField] AudioClip comboChainSound;
+    [SerializeField] float comboPitchBase = 0.8f;
+    [SerializeField] float comboPitchPerChain = 0.1f;
+    [SerializeField] float comboMaxPitch = 1.5f;
 
-    // ---- Estado interno ----
-    private float _footstepTimer;
-    private float _targetWindVolume;
-    private float _targetWindPitch;
-    private bool _wasGroundedLastFrame;
-    private int _lastMomentumCount;
+    private float footstepTimer;
+    private float targetWindVolume;
+    private float targetWindPitch;
+    private bool wasGroundedLastFrame;
+    private int lastMomentumCount;
 
     private void Awake()
     {
@@ -87,7 +73,6 @@ public class ParkourAudioManager : MonoBehaviour
 
     private void Start()
     {
-        // Configurar viento como loop silencioso
         if (windSource != null && windLoop != null)
         {
             windSource.clip = windLoop;
@@ -95,7 +80,7 @@ public class ParkourAudioManager : MonoBehaviour
             windSource.volume = 0f;
             windSource.Play();
         }
-        _wasGroundedLastFrame = true;
+        wasGroundedLastFrame = true;
     }
 
     private void Update()
@@ -109,73 +94,62 @@ public class ParkourAudioManager : MonoBehaviour
         UpdateFootsteps(speed, dt);
         CheckMomentumChain();
 
-        _wasGroundedLastFrame = playerSM.Grounded;
+        wasGroundedLastFrame = playerSM.Grounded;
     }
 
-    // ==================== VIENTO ====================
     private void UpdateWind(float speed, float dt)
     {
         if (windSource == null) return;
 
-        // Volumen y pitch aumentan proporcionalmente a la velocidad
-        float speedRatio = Mathf.InverseLerp(_windMinSpeed, _windMaxSpeed, speed);
-        _targetWindVolume = speedRatio * _windMaxVolume;
-        _targetWindPitch = Mathf.Lerp(1f, _windMaxPitch, speedRatio);
+        float speedRatio = Mathf.InverseLerp(windMinSpeed, windMaxSpeed, speed);
+        targetWindVolume = speedRatio * windMaxVolume;
+        targetWindPitch = Mathf.Lerp(1f, windMaxPitch, speedRatio);
 
-        windSource.volume = Mathf.Lerp(windSource.volume, _targetWindVolume, _windLerpSpeed * dt);
-        windSource.pitch = Mathf.Lerp(windSource.pitch, _targetWindPitch, _windLerpSpeed * dt);
+        windSource.volume = Mathf.Lerp(windSource.volume, targetWindVolume, windLerpSpeed * dt);
+        windSource.pitch = Mathf.Lerp(windSource.pitch, targetWindPitch, windLerpSpeed * dt);
     }
 
-    // ==================== PISADAS ====================
     private void UpdateFootsteps(float speed, float dt)
     {
         if (footstepSource == null || footstepClips == null || footstepClips.Length == 0) return;
 
-        // Solo pisar si estamos en el suelo y moviéndonos
-        if (!playerSM.Grounded || speed < _footstepMinSpeed)
+        if (!playerSM.Grounded || speed < footstepMinSpeed)
         {
-            _footstepTimer = 0f;
+            footstepTimer = 0f;
             return;
         }
 
-        // Calcular intervalo: más rápido = menos tiempo entre pisadas
-        float speedRatio = Mathf.Clamp01(speed / _footstepSpeedRef);
-        float interval = Mathf.Lerp(_footstepBaseInterval, _footstepMinInterval, speedRatio);
+        float speedRatio = Mathf.Clamp01(speed / footstepSpeedRef);
+        float interval = Mathf.Lerp(footstepBaseInterval, footstepMinInterval, speedRatio);
 
-        _footstepTimer += dt;
-        if (_footstepTimer >= interval)
+        footstepTimer += dt;
+        if (footstepTimer >= interval)
         {
-            _footstepTimer = 0f;
+            footstepTimer = 0f;
             PlayRandomClip(footstepSource, footstepClips);
         }
     }
 
-    // ==================== MOMENTUM CHAIN ====================
     private void CheckMomentumChain()
     {
-        if (playerSM.MomentumChainCount > _lastMomentumCount && playerSM.MomentumChainCount > 1)
+        if (playerSM.MomentumChainCount > lastMomentumCount && playerSM.MomentumChainCount > 1)
         {
-            // Se ha encadenado una nueva acción de parkour
             PlayComboSound();
         }
-        _lastMomentumCount = playerSM.MomentumChainCount;
+        lastMomentumCount = playerSM.MomentumChainCount;
     }
 
     private void PlayComboSound()
     {
         if (comboSource == null || comboChainSound == null) return;
 
-        // El pitch sube con cada acción encadenada (cada vez suena más agudo)
-        float pitch = _comboPitchBase + (playerSM.MomentumChainCount * _comboPitchPerChain);
-        pitch = Mathf.Min(pitch, _comboMaxPitch);
+        float pitch = comboPitchBase + (playerSM.MomentumChainCount * comboPitchPerChain);
+        pitch = Mathf.Min(pitch, comboMaxPitch);
 
         comboSource.pitch = pitch;
         comboSource.PlayOneShot(comboChainSound);
     }
 
-    // ==================== API PÚBLICA ====================
-
-    /// <summary>Reproduce un grunt aleatorio del array dado.</summary>
     public void PlayGrunt(AudioClip[] clips)
     {
         if (gruntSource == null || clips == null || clips.Length == 0) return;
@@ -188,12 +162,11 @@ public class ParkourAudioManager : MonoBehaviour
     public void PlayLandingGrunt() => PlayGrunt(landingGrunts);
     public void PlaySlideGrunt() => PlayGrunt(slideGrunts);
 
-    // ==================== UTILIDADES ====================
     private void PlayRandomClip(AudioSource source, AudioClip[] clips)
     {
         if (clips.Length == 0) return;
         int index = Random.Range(0, clips.Length);
-        source.pitch = Random.Range(0.9f, 1.1f); // Variación sutil de pitch para que no suene repetitivo
+        source.pitch = Random.Range(0.9f, 1.1f);
         source.PlayOneShot(clips[index]);
     }
 

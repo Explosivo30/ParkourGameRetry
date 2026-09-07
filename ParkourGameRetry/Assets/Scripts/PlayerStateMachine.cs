@@ -2,20 +2,25 @@ using Unity.Cinemachine;
 using UnityEngine;
 using UnityEngine.Splines;
 
-public class PlayerStateMachine : StateMachine
+public partial class PlayerStateMachine : StateMachine
 {
     //Control Start
     InputReader controls;
     public InputReader Controls => controls;
     //Control End
 
+    // Motor de Física Separado (Single-Pass Movement Motor)
+    [Header("Motor de Movimiento")]
+    [SerializeField] PlayerMotor motor;
+    public PlayerMotor Motor => motor;
+
     //----- START GROUND DETECTION
-    [SerializeField] float _height;
+    [Header("Ground Detection")]
+    [Tooltip("Desplazamiento vertical desde transform.position para el inicio del cast")]
+    [SerializeField] float _height = 0.5f;
     [SerializeField] float _castRadius = 0.49f;
     [SerializeField] float _castLength = 0.1f;
     [SerializeField] float _maxAngle = 45f;
-    [SerializeField] float _groundProbeDistance = 0.18f;
-    [SerializeField, Range(0.5f, 1f)] float _groundProbeRadiusScale = 0.9f;
     Vector3 _downDir = Vector3.down;
 
     [SerializeField] LayerMask _groundMask = int.MinValue;
@@ -44,20 +49,26 @@ public class PlayerStateMachine : StateMachine
 
     //Variables 
     [ExcelPort]
-    [SerializeField] float _acceleration = 8f;         // Fuerza de aceleración al mantener input
+    [SerializeField] float _acceleration = 12f;        // Fuerza de aceleración al mantener input
     [ExcelPort]
     [SerializeField] float _targetVelocity = 10f;      // Velocidad máxima horizontal
+    public float TargetVelocity => _targetVelocity;
 
     [Header("Desaceleración")]
     [SerializeField] float _deceleration = 1.5f;       // Fricción leve (conserva el momentum extra)
-    [SerializeField] float _brakingDeceleration = 20f; // Fuerza de frenado fuerte al soltar el input
+    [SerializeField] float _brakingDeceleration = 22f; // Fuerza de frenado fuerte al soltar el input
     
+    [Header("Ground Turning")]
+    [Tooltip("How quickly running velocity follows a new direction on the ground. Higher values give tighter turns; 0 keeps the original drift.")]
+    [SerializeField, Min(0f)] float _groundTurnResponsiveness = 24f;
+
     [Header("Air Control")]
-    [SerializeField] float _airAcceleration = 3f;       // Aceleración/maniobrabilidad en el aire
+    [SerializeField] float _airAcceleration = 4f;       // Aceleración/maniobrabilidad en el aire
     [SerializeField] float _airDeceleration = 0f;       // Freno en el aire (0 = conserva toda la inercia)
 
-    [SerializeField, Range(0f, 1f)] float _turnaroundStrength;
+    [SerializeField, Range(0f, 1f)] float _turnaroundStrength = 0.85f;
     [SerializeField] float rotationSpeed = 50f;
+
     [SerializeField] float _mouseLookSensitivity = 0.09f;
     [SerializeField] float _gamepadLookSpeed = 180f;
     public CinemachineInputAxisController cineMachineCamera;
@@ -303,9 +314,8 @@ public class PlayerStateMachine : StateMachine
 
 
     //----- START PLAYER GRAVITY
-
     [ExcelPort]
-    [SerializeField] float _gravityForce = 9.81f;
+    [SerializeField] float _gravityForce = 20f;
     [SerializeField] float _groundStickSpeed = 2f;
     [SerializeField] float _terminalFallSpeed = 45f;
     public Vector3 GravityDir { get { return _gravityDir; } set { _gravityDir = value.normalized; } }
@@ -336,7 +346,7 @@ public class PlayerStateMachine : StateMachine
 
     public Vector3 VaultTargetPosition { get; private set; }
     public bool JumpPressed { get; private set; }
-    public bool JumpHeld { get; private set; }
+    public bool JumpHeld => controls != null && controls.JumpHeld;
     [Header("Jump")]
     [ExcelPort]
     [SerializeField] float _jumpForce = 8f;
@@ -361,7 +371,7 @@ public class PlayerStateMachine : StateMachine
     private void OnValidate()
     {
         _downDir = _downDir.normalized;
-        _groundProbeDistance = Mathf.Max(0.05f, _groundProbeDistance);
+        _castLength = Mathf.Max(0.01f, _castLength);
         _terminalFallSpeed = Mathf.Max(_gravityForce, _terminalFallSpeed);
         controls = GetComponent<InputReader>();
         if (cc == null) cc = GetComponent<CharacterController>();
@@ -372,6 +382,12 @@ public class PlayerStateMachine : StateMachine
     {
         controls = GetComponent<InputReader>();
         if (cc == null) cc = GetComponent<CharacterController>();
+        if (cc != null)
+        {
+            // Aumentar skinWidth para evitar atravesar paredes a altas velocidades
+            if (cc.skinWidth < 0.15f)
+                cc.skinWidth = 0.15f;
+        }
         ConfigureDefaultLayers();
     }
 
@@ -417,6 +433,7 @@ public class PlayerStateMachine : StateMachine
         AddState(new PlayerIdleState(this));
         AddState(new PlayerVaultState(this));
         AddState(new PlayerWallRunState(this));
+        AddState(new PlayerWallClimbState(this));
         AddState(new PlayerSlideState(this));
         AddState(new PlayerDashState(this));
         AddState(new PlayerLedgeGrabState(this));
@@ -579,24 +596,17 @@ public class PlayerStateMachine : StateMachine
             return;
         }
 
-        Vector3 worldCenter = transform.TransformPoint(cc.center);
-        float scaledHeight = cc.height * Mathf.Abs(transform.lossyScale.y);
-        float scaledRadius = cc.radius * Mathf.Max(
-            Mathf.Abs(transform.lossyScale.x),
-            Mathf.Abs(transform.lossyScale.z)
-        );
-        float radius = scaledRadius * _groundProbeRadiusScale;
-        float bottomOffset = Mathf.Max(0f, scaledHeight * 0.5f - scaledRadius);
-        Vector3 bottomSphereCenter = worldCenter + _downDir * bottomOffset;
-        Vector3 probeOrigin = bottomSphereCenter - _downDir * 0.03f;
+        Vector3 probeOrigin = transform.position + Vector3.up * _height;
+        float radius = _castRadius;
 
+        LayerMask mask = _groundMask.value != 0 ? _groundMask : ~0;
         bool hasGround = Physics.SphereCast(
             probeOrigin,
             radius,
             _downDir,
             out RaycastHit hitInfo,
-            _groundProbeDistance,
-            _groundMask,
+            _castLength,
+            mask,
             QueryTriggerInteraction.Ignore
         );
 
@@ -610,6 +620,7 @@ public class PlayerStateMachine : StateMachine
                 _sliding = false;
                 _slideNormal = hitInfo.normal;
                 _airDashConsumed = false;
+                _wallClimbConsumed = false;
             }
             else
             {
@@ -632,8 +643,11 @@ public class PlayerStateMachine : StateMachine
         return controls != null ? Vector2.ClampMagnitude(controls.MovementValue, 1f) : Vector2.zero;
     }
 
-    public void PlayerHorizontalMovement(Vector3 inputDir)
+    public void PlayerHorizontalMovement(Vector3 inputDir, float deltaTime = -1f)
     {
+        if (deltaTime < 0f) deltaTime = Time.deltaTime;
+        if (deltaTime <= 0f) return;
+
         Vector3 currentVelocity = new Vector3(
             _currentHorizontalVelocity.x,
             0f,
@@ -668,7 +682,7 @@ public class PlayerStateMachine : StateMachine
         float speed = currentVelocity.magnitude;
         if (speed > 0)
         {
-            float drop = currentDecelValue * Time.deltaTime;
+            float drop = currentDecelValue * deltaTime;
             
             // Freno extra si estamos girando drásticamente en el suelo (turnaround)
             if (wishDirection.sqrMagnitude > 0.01f && Grounded)
@@ -677,12 +691,21 @@ public class PlayerStateMachine : StateMachine
                 if (dot < 0) 
                 {
                     // Al cambiar de dirección bruscamente, usamos el freno fuerte para ser ágiles
-                    drop += (_brakingDeceleration * -dot * _turnaroundStrength * Time.deltaTime);
+                    drop += (_brakingDeceleration * -dot * _turnaroundStrength * deltaTime);
                 }
             }
 
             float newSpeed = Mathf.Max(speed - drop, 0);
             currentVelocity *= (newSpeed / speed);
+        }
+
+        // Ground grip redirects running momentum, including perpendicular turns.
+        // Blend velocity vectors so reversals brake through zero without a sideways arc.
+        // This cannot add speed, and airborne/parkour states keep their own control.
+        if (Grounded && wishDirection.sqrMagnitude > 0.01f)
+        {
+            float turnBlend = 1f - Mathf.Exp(-Mathf.Max(0f, _groundTurnResponsiveness) * deltaTime);
+            currentVelocity = Vector3.Lerp(currentVelocity, wishDirection * currentVelocity.magnitude, turnBlend);
         }
 
         // 2. APLICAR ACELERACIÓN (Fuerza Aditiva)
@@ -699,7 +722,7 @@ public class PlayerStateMachine : StateMachine
             if (addSpeed > 0)
             {
                 // Aceleramos, pero sin pasarnos de 'addSpeed'
-                float accelSpeed = accel * Time.deltaTime;
+                float accelSpeed = accel * deltaTime;
                 if (accelSpeed > addSpeed) accelSpeed = addSpeed;
 
                 currentVelocity += wishDirection * accelSpeed;
@@ -725,13 +748,13 @@ public class PlayerStateMachine : StateMachine
         }
 
         Vector3 posBeforeMove = transform.position;
-        cc.Move(movementVelocity * Time.deltaTime);
+        cc.Move(movementVelocity * deltaTime);
 
         if (movementVelocity.sqrMagnitude > 0.01f)
         {
             Vector3 actualDisplacement = transform.position - posBeforeMove;
             actualDisplacement.y = 0f;
-            Vector3 intendedDisplacement = movementVelocity * Time.deltaTime;
+            Vector3 intendedDisplacement = movementVelocity * deltaTime;
             intendedDisplacement.y = 0f;
 
             if (intendedDisplacement.sqrMagnitude > 0.0001f)
@@ -741,12 +764,19 @@ public class PlayerStateMachine : StateMachine
                 {
                     // Conserva la componente tangencial al rozar una pared,
                     // pero elimina el momentum fantasma que empuja contra ella.
-                    Vector3 actualVelocity = actualDisplacement / Mathf.Max(Time.deltaTime, 0.0001f);
+                    Vector3 actualVelocity = actualDisplacement / Mathf.Max(deltaTime, 0.0001f);
                     if (actualVelocity.magnitude < _currentHorizontalVelocity.magnitude)
                         _currentHorizontalVelocity = actualVelocity;
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// LLAMADA SINGLE-PASS: Mantiene compatibilidad con estados existentes.
+    /// </summary>
+    public void MoveSinglePass()
+    {
     }
 
     /// <summary>
@@ -783,13 +813,11 @@ public class PlayerStateMachine : StateMachine
     private void HandleJumpStarted()
     {
         JumpPressed = true;
-        JumpHeld = true;
         JumpBufferCounter = _jumpBufferTime; // Inicializar buffer de salto
     }
 
     private void HandleJumpCanceled()
     {
-        JumpHeld = false;
         JumpPressed = false;
 
         // Soltar pronto produce un salto corto; mantener conserva el arco completo.
@@ -829,7 +857,6 @@ public class PlayerStateMachine : StateMachine
     public void ResetVaultPhysics()
     {
         JumpPressed = false;
-        JumpHeld = false;
         JumpBufferCounter = 0f;
     }
 
@@ -844,15 +871,7 @@ public class PlayerStateMachine : StateMachine
             CoyoteTimeCounter -= dt;
     }
 
-    public float VelocityRemaining(Vector3 currentVelocity, Vector3 input)
-    {
-        float dot = Vector2.Dot(currentVelocity.normalized, input.normalized);
 
-        dot += 1f + _turnaroundStrength;
-        dot /= 2f + _turnaroundStrength;
-        dot = Mathf.Pow(dot, 1f - _turnaroundStrength);
-        return dot;
-    }
 
 
     private Vector3 currentForceGravity = Vector3.zero;
@@ -865,7 +884,7 @@ public class PlayerStateMachine : StateMachine
         {
             // Una velocidad pequeña mantiene contacto sin intentar penetrar
             // el suelo a 21 m/s como hacía la implementación anterior.
-            if (Vector3.Dot(currentForceGravity, -_gravityDir) <= 0f)
+            if (Vector3.Dot(currentForceGravity, -_downDir) <= 0f)
                 currentForceGravity = _gravityDir * _groundStickSpeed;
         }
         else
@@ -940,13 +959,14 @@ public class PlayerStateMachine : StateMachine
     /// <returns>true si hay pared a la derecha dentro de _wallCheckDistance</returns>
     public bool CheckWallRight(out RaycastHit hit)
     {
-        // Origen al nivel del pecho (1.0f) para NO detectar paredes cuando estamos en el suelo.
-        // A 0.5f detectaba paredes incluso al estar de pie junto a ellas.
-        return Physics.Raycast(
+        // SphereCast en vez de Raycast para evitar engancharse en esquinas
+        float wallProbeRadius = 0.15f;
+        return Physics.SphereCast(
             transform.position + transform.up * 1.0f,    // Origen al nivel del pecho
+            wallProbeRadius,
             transform.right,                              // Dirección: derecha del jugador
             out hit,
-            _wallCheckDistance,                           // Distancia máxima de detección
+            _wallCheckDistance - wallProbeRadius,          // Ajustar distancia para compensar radio
             _wallRunMask                                  // Solo capas marcadas como pared
         );
     }
@@ -959,12 +979,14 @@ public class PlayerStateMachine : StateMachine
     /// <returns>true si hay pared a la izquierda dentro de _wallCheckDistance</returns>
     public bool CheckWallLeft(out RaycastHit hit)
     {
-        // Origen al nivel del pecho (1.0f) — misma lógica que CheckWallRight
-        return Physics.Raycast(
+        // SphereCast en vez de Raycast para evitar engancharse en esquinas
+        float wallProbeRadius = 0.15f;
+        return Physics.SphereCast(
             transform.position + transform.up * 1.0f,    // Origen al nivel del pecho
+            wallProbeRadius,
             -transform.right,                             // Dirección: izquierda del jugador
             out hit,
-            _wallCheckDistance,                           // Distancia máxima de detección
+            _wallCheckDistance - wallProbeRadius,          // Ajustar distancia para compensar radio
             _wallRunMask                                  // Solo capas marcadas como pared
         );
     }
@@ -1069,15 +1091,32 @@ public class PlayerStateMachine : StateMachine
     /// <summary>
     /// Aplica un impulso de salida del wall-run al CharacterController.
     /// Combina fuerza lateral (alejándose de la pared) + fuerza vertical (hacia arriba).
-    /// Se usa desde PlayerWallRunState al salir por salto.
+    /// Acepta la dirección de input del jugador para permitir Air Control inmediato.
     /// </summary>
     /// <param name="wallNormal">Normal de la pared (apunta hacia fuera de la pared)</param>
-    public void ApplyWallRunExitImpulse(Vector3 wallNormal, Vector3 wallTangent, float alongWallSpeed)
+    /// <param name="wallTangent">Dirección tangente a la pared</param>
+    /// <param name="alongWallSpeed">Velocidad a lo largo de la pared</param>
+    /// <param name="playerInputDir">Dirección de input del jugador en el momento del salto</param>
+    public void ApplyWallRunExitImpulse(Vector3 wallNormal, Vector3 wallTangent, float alongWallSpeed, Vector3 playerInputDir = default)
     {
         Vector3 flatNormal = Vector3.ProjectOnPlane(wallNormal, Vector3.up).normalized;
         Vector3 flatTangent = Vector3.ProjectOnPlane(wallTangent, Vector3.up).normalized;
+
+        // Velocidad base de salida: tangente + empuje fuera de la pared
         Vector3 exitHorizontalVelocity = flatTangent * alongWallSpeed
                                        + flatNormal * _wallRunExitForce;
+
+        // Air Control: mezclar la dirección del input del jugador para redirigir el salto
+        if (playerInputDir.sqrMagnitude > 0.01f)
+        {
+            Vector3 flatInput = Vector3.ProjectOnPlane(playerInputDir, Vector3.up).normalized;
+            // Mezclar 60% salida natural + 40% dirección del jugador
+            exitHorizontalVelocity = Vector3.Lerp(exitHorizontalVelocity, flatInput * exitHorizontalVelocity.magnitude, 0.4f);
+            // Garantizar que siempre nos alejamos un mínimo de la pared
+            float awayFromWall = Vector3.Dot(exitHorizontalVelocity, flatNormal);
+            if (awayFromWall < _wallRunExitForce * 0.5f)
+                exitHorizontalVelocity += flatNormal * (_wallRunExitForce * 0.5f - awayFromWall);
+        }
 
         CurrentHorizontalVelocity = exitHorizontalVelocity;
         SetVerticalVelocity(_wallRunExitUpForce);
@@ -1223,7 +1262,8 @@ public class PlayerStateMachine : StateMachine
                 varietyMultiplier = 0.65f;
         }
 
-        float speedBonus = Mathf.InverseLerp(_targetVelocity, _speedCapSS, CurrentHorizontalVelocity.magnitude);
+        float targetVel = motor != null ? motor.TargetVelocity : 10f;
+        float speedBonus = Mathf.InverseLerp(targetVel, _speedCapSS, CurrentHorizontalVelocity.magnitude);
         float points = GetActionStylePoints(action) * varietyMultiplier * quality;
         points *= 1f + speedBonus * 0.25f;
 
@@ -1349,65 +1389,79 @@ public class PlayerStateMachine : StateMachine
     /// </summary>
     public bool CanLedgeGrab()
     {
-        if (Grounded) return false;
-        
-        Vector3 forward = new Vector3(transform.forward.x, 0f, transform.forward.z).normalized;
-        Vector3 horizontalVelocity = CurrentHorizontalVelocity;
-        Vector3 inputDirection = GetWorldMovementDirection(GetInput());
+        if (Grounded || Time.time < _ledgeReattachTime) return false;
+        if (controls != null && controls.CrouchHeld) return false;
 
-        // No agarrarse automáticamente mientras nos alejamos o pasamos de lado.
-        bool movingTowardLedge = horizontalVelocity.magnitude > 0.5f
-            && Vector3.Dot(horizontalVelocity.normalized, forward) > 0.15f;
+        Vector3 forward = Vector3.ProjectOnPlane(transform.forward, Vector3.up).normalized;
+        Vector3 inputDirection = GetWorldMovementDirection(GetInput());
+        bool movingTowardLedge = CurrentHorizontalVelocity.magnitude > 0.5f
+            && Vector3.Dot(CurrentHorizontalVelocity.normalized, forward) > 0.15f;
         bool pressingTowardLedge = inputDirection.magnitude > 0.1f
             && Vector3.Dot(inputDirection.normalized, forward) > 0.25f;
-        if (!movingTowardLedge && !pressingTowardLedge) return false;
+        if (!movingTowardLedge && !pressingTowardLedge && !JumpHeld) return false;
+        if (GetInput().y < -0.1f) return false;
 
-        float upwardSpeed = Vector3.Dot(currentForceGravity, -_gravityDir);
-        if (upwardSpeed > 3f) return false;
-        
-        // Comprobar si hay una pared enfrente
-        if (!Physics.Raycast(transform.position + Vector3.up * 0.5f, forward, out RaycastHit wallHit, _ledgeCheckDistance, _vaultMask))
-            return false;
-        
-        // Comprobar el borde superior — lanzar raycast hacia abajo desde arriba
-        Vector3 abovePoint = wallHit.point + Vector3.up * _ledgeGrabMaxHeight + forward * 0.1f;
-        if (!Physics.Raycast(abovePoint, Vector3.down, out RaycastHit topHit, _ledgeGrabMaxHeight, _vaultMask))
-            return false;
-        
-        float ledgeHeight = topHit.point.y - transform.position.y;
-        
-        // Debe estar por encima de la altura de vault pero por debajo de la máxima de grab
-        if (ledgeHeight < _ledgeGrabMinHeight || ledgeHeight > _ledgeGrabMaxHeight)
-            return false;
-        
-        float scaleY = Mathf.Abs(transform.lossyScale.y);
-        float scaleXZ = Mathf.Max(Mathf.Abs(transform.lossyScale.x), Mathf.Abs(transform.lossyScale.z));
-        float halfHeight = cc.height * scaleY * 0.5f;
-        float centerHeight = cc.center.y * scaleY;
-        float radius = cc.radius * scaleXZ;
-        float skin = cc.skinWidth * scaleXZ;
+        // Mantener salto enlaza el ascenso con el mantle sin esperar a caer.
+        if (!JumpHeld && Vector3.Dot(currentForceGravity, Vector3.up) > 3f) return false;
+        float minHeight = JumpHeld ? Mathf.Max(0.3f, cc.stepOffset) : _ledgeGrabMinHeight;
+        return TryFindClimbLedge(minHeight);
+    }
 
-        LedgeWallNormal = wallHit.normal.normalized;
+    // =====================================================================
+    //  GIZMOS — Visualización del Ground Detection (Solo al seleccionar al jugador)
+    // =====================================================================
+    private void OnDrawGizmosSelected()
+    {
+        if (cc == null) cc = GetComponent<CharacterController>();
+        if (cc == null) return;
 
-        // Posición de cuelgue: la parte superior de la cápsula queda justo
-        // debajo del borde y todo su radio permanece fuera de la pared.
-        LedgeGrabPosition = wallHit.point
-            + LedgeWallNormal * (radius + skin + 0.03f);
-        LedgeGrabPosition = new Vector3(
-            LedgeGrabPosition.x,
-            topHit.point.y - halfHeight - centerHeight - _ledgeHangClearance,
-            LedgeGrabPosition.z
+        Vector3 probeOrigin = transform.position + Vector3.up * _height;
+        float radius = _castRadius;
+        Vector3 probeEnd = probeOrigin + _downDir * _castLength;
+
+        LayerMask mask = _groundMask.value != 0 ? _groundMask : ~0;
+        bool isHit = Physics.SphereCast(
+            probeOrigin,
+            radius,
+            _downDir,
+            out RaycastHit hit,
+            _castLength,
+            mask,
+            QueryTriggerInteraction.Ignore
         );
 
-        // Posición final: la base de la cápsula queda encima de la superficie,
-        // no dentro de ella como ocurría con topHit.point + 0.1f.
-        LedgeClimbTarget = topHit.point
-            - LedgeWallNormal * (radius + _ledgeClimbForwardOffset);
-        LedgeClimbTarget = new Vector3(
-            LedgeClimbTarget.x,
-            topHit.point.y + halfHeight - centerHeight + skin + _ledgeClimbLandingClearance,
-            LedgeClimbTarget.z
-        );
-        return true;
+        // Verde = En el suelo (Grounded), Amarillo = Pendiente muy empinada (Sliding), Rojo = En el aire
+        if (isHit)
+        {
+            float groundAngle = Vector3.Angle(hit.normal, -_downDir);
+            if (groundAngle <= _maxAngle)
+                Gizmos.color = new Color(0f, 1f, 0.3f, 0.9f); // Verde
+            else
+                Gizmos.color = new Color(1f, 0.85f, 0f, 0.9f); // Amarillo
+        }
+        else
+        {
+            Gizmos.color = new Color(1f, 0.2f, 0.2f, 0.8f); // Rojo
+        }
+
+        // Dibujar esferas de inicio y fin del SphereCast
+        Gizmos.DrawWireSphere(probeOrigin, radius);
+        Gizmos.DrawWireSphere(probeEnd, radius);
+
+        // Dibujar líneas conectores del volumen de barrido
+        Vector3 rightOffset = transform.right * radius;
+        Vector3 forwardOffset = transform.forward * radius;
+        Gizmos.DrawLine(probeOrigin + rightOffset, probeEnd + rightOffset);
+        Gizmos.DrawLine(probeOrigin - rightOffset, probeEnd - rightOffset);
+        Gizmos.DrawLine(probeOrigin + forwardOffset, probeEnd + forwardOffset);
+        Gizmos.DrawLine(probeOrigin - forwardOffset, probeEnd - forwardOffset);
+
+        // Dibujar punto de impacto exacto y vector normal si está tocando el suelo
+        if (isHit)
+        {
+            Gizmos.color = Color.cyan;
+            Gizmos.DrawSphere(hit.point, 0.04f);
+            Gizmos.DrawLine(hit.point, hit.point + hit.normal * 0.4f);
+        }
     }
 }
