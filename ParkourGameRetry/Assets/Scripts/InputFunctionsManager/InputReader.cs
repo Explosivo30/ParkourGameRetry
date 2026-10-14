@@ -18,6 +18,7 @@ public class InputReader : MonoBehaviour,InputSystem_Actions.IPlayerActions
     public event Action DodgeEvent;
     public event Action TargetEvent;
     public event Action OnGrapplePressed;
+    public event Action OnInteractPressed;
 
     // ---- Crouch events para Slide y Landing Roll ----
     public event Action OnCrouchStarted;
@@ -99,7 +100,7 @@ public class InputReader : MonoBehaviour,InputSystem_Actions.IPlayerActions
 
     public void OnInteract(InputAction.CallbackContext context)
     {
-        
+        if (context.started) OnInteractPressed?.Invoke();
     }
 
     public void OnJump(InputAction.CallbackContext context)
